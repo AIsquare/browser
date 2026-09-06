@@ -2,6 +2,34 @@ import { ResearchCard } from '../types';
 
 export const INITIAL_RESEARCH_CARDS: ResearchCard[] = [
   {
+    id: 'card-learn-inference',
+    title: 'Learn Inference: Inference Engineering, Explained Interactively',
+    domain: 'learn-inference.com',
+    domainFavicon: 'Baseten',
+    category: 'Inference Architecture',
+    matchScore: 100,
+    author: 'Baseten Systems Engineering',
+    institution: 'Learn Inference Interactive Project',
+    readTime: '12 min read',
+    publishedDate: '2026',
+    thumbnailUrl: 'https://learn-inference.com/opengraph-image?6d215197eb08f619',
+    summary: 'An interactive guide to inference engineering: how generative AI models are served in production, from attention kernels to multi-cloud capacity, speculative decoding, and roofline latency models.',
+    keyFindings: [
+      'Interactive roofline analysis quantifying memory-bandwidth vs compute-bound token generation regimes.',
+      'Comprehensive KV-cache memory budgeting formulas and multi-query vs grouped-query attention trade-offs.',
+      'Production serving architectures combining vLLM, SGLang, speculative decoding, and continuous batching.'
+    ],
+    fullArticle: [
+      'Serving deep learning models at scale presents fundamentally distinct challenges compared to offline training. While training is primarily compute-bound with large homogeneous batch sizes, token-by-token autoregressive generation is dominated by memory bandwidth bottlenecks and dynamic sequential dependencies.',
+      'Learn Inference walks through the mechanical anatomy of an inference cluster: from high-bandwidth memory (HBM) transfers during the decode phase to paged attention mechanisms that eliminate fragmentation.',
+      'Through interactive benchmarks and interactive matrix simulations, engineers learn how to size GPU clusters, optimize time-to-first-token (TTFT), and maximize throughput (tokens/sec/dollar) across modern multi-accelerator environments.'
+    ],
+    tags: ['Inference Engineering', 'LLM Serving', 'KV Cache', 'vLLM', 'Speculative Decoding', 'GPU Memory'],
+    accentColor: 'indigo',
+    badge: 'Interactive Textbook',
+    rawUrl: 'https://learn-inference.com/'
+  },
+  {
     id: 'card-1',
     title: 'Neuro-Symbolic Reasoning in Autonomous Deep Exploration Agents',
     domain: 'arxiv.org',

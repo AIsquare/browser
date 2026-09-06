@@ -42,9 +42,11 @@ export function ReaderView({
   const [activeTab, setActiveTab] = useState<'reader' | 'interactive'>('reader');
   const [copied, setCopied] = useState(false);
   const [iframeKey, setIframeKey] = useState(0);
+  const [renderMode, setRenderMode] = useState<'direct' | 'proxy'>('direct');
 
   const targetUrl = card.rawUrl || (card.domain.startsWith('http') ? card.domain : `https://${card.domain}`);
   const proxyUrl = `/api/proxy-page?url=${encodeURIComponent(targetUrl)}`;
+  const currentIframeSrc = renderMode === 'direct' ? targetUrl : proxyUrl;
 
   // Keyboard navigation inside reader
   useEffect(() => {
@@ -216,11 +218,10 @@ export function ReaderView({
             <span>{copied ? 'Copied' : 'Share'}</span>
           </button>
           <a
-            href={targetUrl}
+            href={`https://${card.domain}`}
             target="_blank"
             rel="noreferrer noopener"
             className="flex items-center gap-1 px-2.5 py-1 rounded-md text-slate-600 hover:text-slate-900 hover:bg-slate-100 transition-colors"
-            title={`Open ${targetUrl}`}
           >
             <span>External</span>
             <ExternalLink className="w-3.5 h-3.5" />
@@ -343,9 +344,43 @@ export function ReaderView({
               </div>
 
               {/* URL address pill */}
-              <div className="flex-1 max-w-2xl mx-auto flex items-center bg-white px-3 py-1.5 rounded-lg border border-slate-200 text-slate-700 font-mono text-[11px] shadow-2xs truncate">
+              <div className="flex-1 max-w-xl mx-auto flex items-center bg-white px-3 py-1.5 rounded-lg border border-slate-200 text-slate-700 font-mono text-[11px] shadow-2xs truncate">
                 <Lock className="w-3 h-3 text-emerald-600 mr-2 shrink-0" />
                 <span className="truncate select-all">{targetUrl}</span>
+              </div>
+
+              {/* Render Engine Toggle: Direct Native vs Reverse Proxy */}
+              <div className="flex items-center bg-slate-200/90 p-0.5 rounded-lg text-[10px] font-medium shrink-0">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setRenderMode('direct');
+                    setIframeKey((prev) => prev + 1);
+                  }}
+                  className={`px-2 py-0.5 rounded-md transition-all ${
+                    renderMode === 'direct'
+                      ? 'bg-white text-indigo-700 shadow-2xs font-semibold'
+                      : 'text-slate-600 hover:text-slate-900'
+                  }`}
+                  title="Direct Mode: Renders directly from origin with 100% native Next.js, Turbopack, and WebGL support"
+                >
+                  Direct
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setRenderMode('proxy');
+                    setIframeKey((prev) => prev + 1);
+                  }}
+                  className={`px-2 py-0.5 rounded-md transition-all ${
+                    renderMode === 'proxy'
+                      ? 'bg-white text-indigo-700 shadow-2xs font-semibold'
+                      : 'text-slate-600 hover:text-slate-900'
+                  }`}
+                  title="Proxy Mode: Rewrites URLs and strips X-Frame-Options headers for sites that block embedding"
+                >
+                  Proxy
+                </button>
               </div>
 
               {/* Actions */}
@@ -358,9 +393,13 @@ export function ReaderView({
                 >
                   <RotateCw className="w-3.5 h-3.5" />
                 </button>
-                <span className="px-2 py-0.5 rounded text-[10px] font-medium bg-emerald-50 text-emerald-700 border border-emerald-200 hidden sm:inline-flex items-center gap-1">
-                  <Shield className="w-3 h-3 text-emerald-600" />
-                  Rendered As-Is
+                <span className={`px-2 py-0.5 rounded text-[10px] font-medium border hidden sm:inline-flex items-center gap-1 ${
+                  renderMode === 'direct'
+                    ? 'bg-indigo-50 text-indigo-700 border-indigo-200'
+                    : 'bg-emerald-50 text-emerald-700 border-emerald-200'
+                }`}>
+                  <Shield className="w-3 h-3" />
+                  {renderMode === 'direct' ? 'Direct CDN' : 'Proxied'}
                 </span>
                 <a
                   href={targetUrl}
@@ -378,11 +417,11 @@ export function ReaderView({
             {/* Embedded Sandbox Iframe */}
             <div className="flex-1 w-full h-full relative bg-slate-50">
               <iframe
-                key={iframeKey}
-                src={proxyUrl}
+                key={`${renderMode}-${iframeKey}`}
+                src={currentIframeSrc}
                 title={`Live as-is rendering of ${card.title}`}
                 className="w-full h-full border-0 bg-white"
-                sandbox="allow-same-origin allow-scripts allow-forms"
+                sandbox="allow-same-origin allow-scripts allow-forms allow-popups allow-popups-to-escape-sandbox allow-modals allow-downloads"
                 referrerPolicy="no-referrer"
               />
             </div>
