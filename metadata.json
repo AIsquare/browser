@@ -1,6 +1,0 @@
-{
-  "name": "Interactive Research Decks",
-  "description": "Tactile research exploration decks featuring Vertical 3D Cover Flow, Horizontal Ribbon Deck, and 3D Cover Flow with chat-style search and seamless reader workflows in a crisp white theme.",
-  "requestFramePermissions": [],
-  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
-}
