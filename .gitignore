@@ -6,3 +6,11 @@ coverage/
 *.log
 .env*
 !.env.example
+
+# Local extraction inputs and generated outputs
+plan.md
+**/sample_docs/
+**/extracted_dom/
+**/data/blocks/
+**/__pycache__/
+**/phase0_discovery.json
