@@ -65,11 +65,22 @@ def load_document(conn, ast):
 
     content_hash = sha16(''.join(b.get('content', '') or '' for b in blocks))
 
+    now = now_iso()
     conn.execute("""
-      INSERT OR REPLACE INTO documents
-        (doc_id, source_path, source_uri, title, language, content_hash, ingested_at)
-      VALUES (?, ?, ?, ?, ?, ?, ?)
-    """, (doc_id, ast.get('source_path'), source_uri, title, None, content_hash, now_iso()))
+      INSERT INTO documents
+        (doc_id, source_path, source_uri, title, language, content_hash,
+         ingested_at, first_ingested_at, last_ingested_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ON CONFLICT(doc_id) DO UPDATE SET
+        source_path      = excluded.source_path,
+        source_uri       = excluded.source_uri,
+        title            = excluded.title,
+        language         = excluded.language,
+        content_hash     = excluded.content_hash,
+        ingested_at      = excluded.ingested_at,
+        last_ingested_at = excluded.last_ingested_at
+    """, (doc_id, ast.get('source_path'), source_uri, title, None,
+          content_hash, now, now, now))
 
     for b in blocks:
         conn.execute("""
