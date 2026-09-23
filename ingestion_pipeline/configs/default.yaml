@@ -1,0 +1,85 @@
+# Universal narrative template. Works for explainers, code docs,
+# legal opinions, news, research papers.
+#
+# Order in `template_order` determines section order in the final article.
+# `template_roles` defines what each role means — used to classify
+# section headings. Edit the descriptions, not the role names, to tune.
+
+template_order:
+  - Overview
+  - Context
+  - Mechanism
+  - Structure
+  - Examples
+  - Details
+  - Limits
+  - Related
+  - Sources
+
+template_roles:
+  Overview:   "A definition, summary, or introduction describing what this thing fundamentally is."
+  Context:    "Background, motivation, the problem it solves, why it exists, its history or origins."
+  Mechanism:  "How it works, the process, method, algorithm, reasoning, or underlying principle."
+  Structure:  "Parts, components, architecture, subsystems, sections, or the makeup of the whole."
+  Examples:   "Concrete examples, use cases, applications, instances, or scenarios."
+  Details:    "Specific numbers, specifications, parameters, code, formulas, dates, or precise data."
+  Limits:     "Caveats, errors, edge cases, dissent, criticism, failure modes, or restrictions."
+  Related:    "Similar or alternative things, comparisons, contrasts, or alternatives to consider."
+  Sources:    "References, citations, further reading, external links, footnotes, or acknowledgments."
+
+# Minimum cosine similarity between a heading and a role prototype
+# for the classification to count. Below this → Unclassified.
+min_similarity: 0.55
+
+# Bucket for atoms whose section can't be classified.
+fallback_bucket: "Unclassified"
+
+# Chromium headings — never classified, atoms skipped.
+skip_headings:
+  - source
+  - table of contents
+  - references
+  - external links
+  - see also
+  - further reading
+  - notes
+  - related posts
+  - related articles
+  - related video
+  - related question
+  - share
+  - share this
+  - share this article
+  - subscribe
+  - subscribe now
+  - follow us
+  - advertisement
+  - sponsored content
+  - sign up
+  - contact us
+  - search our facts
+  - access denied
+  - frequently asked questions
+  - last updated
+  - get social
+  - more information
+
+  # --- added from observed chrome ---
+  - view sources
+  - experts you can trust
+  - a note from
+  - about the author
+  - about this article
+  - editorial policy
+  - our editorial process
+  - better health starts here
+  - medically reviewed
+  - medically reviewed by
+  - how we reviewed this article
+  - sources and references
+  - further information
+  - related content
+  - you might also like
+  - recommended for you
+  - trending now
+  - popular

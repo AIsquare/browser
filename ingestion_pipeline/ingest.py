@@ -1,249 +1,481 @@
-#!/usr/bin/env python3
 """
-Ingest AST JSONs into a SQLite store: documents, sections, blocks, atoms.
+Load block ASTs into corpus_v1.db.
 
-Configure DB_PATH, SCHEMA_PATH, and INPUTS below, then run:
-    python ingest.py
+Reads every data/blocks/*.json, derives sections, splits atoms, and
+writes to documents, sections, blocks, atoms, images, links.
+
+Math blocks are emitted as a single atom — never sentence-split.
+List items become single atoms. Paragraphs become sentences.
+
+Idempotent: re-running on the same doc deletes and rebuilds its rows.
 """
-import glob, hashlib, json, os, re, sqlite3, sys
+from __future__ import annotations
+
+import json
+import re
+import sqlite3
 from datetime import datetime, timezone
+from pathlib import Path
 
-# ---------- configuration ----------
+from db import connect
 
-DB_PATH = "corpus.db"
-SCHEMA_PATH = "schema.sql"
-INPUTS = [r"C:\Users\lenovo\Downloads\browser_based_agent\dom_extract_fixed_pkg\data\blocks"]
+BLOCKS_DIR = Path('data/blocks')
 
-ABBREV = ['U.S.', 'U.K.', 'Mr.', 'Mrs.', 'Dr.', 'Ms.', 'e.g.', 'i.e.', 'etc.',
-          'vs.', 'Inc.', 'Ltd.', 'Co.', 'St.', 'No.', 'Fig.', 'Vol.', 'Jr.', 'Sr.']
 
-def split_sentences(text):
-    if not text:
+# ----------------------------------------------------------------------
+# Sentence splitting
+# ----------------------------------------------------------------------
+
+ABBREV = {
+    'U.S.', 'U.K.', 'Mr.', 'Mrs.', 'Ms.', 'Dr.', 'e.g.', 'i.e.', 'etc.',
+    'vs.', 'Inc.', 'Ltd.', 'Co.', 'St.', 'No.', 'Fig.', 'Vol.', 'Jr.', 'Sr.',
+    'Ph.D.', 'M.D.', 'B.A.', 'M.A.', 'D.C.', 'U.N.',
+}
+
+
+def split_sentences(text: str) -> list[str]:
+    if not text or not text.strip():
         return []
-    p = text
+    # Protect known abbreviations
+    protected = text
     for a in ABBREV:
-        p = p.replace(a, a.replace('.', '\x00'))
-    parts = re.split(r'(?<=[.!?])\s+(?=[A-Z0-9"\'(])', p)
-    return [s.replace('\x00', '.').strip() for s in parts if s.strip()]
+        protected = protected.replace(a, a.replace('.', '\x00'))
+    # Split on sentence terminators followed by whitespace + capital/digit/quote
+    parts = re.split(r'(?<=[.!?])\s+(?=[A-Z0-9"\'(])', protected)
+    parts = [p.replace('\x00', '.').strip() for p in parts]
+    return [p for p in parts if p]
 
-def clean_text(t):
-    if not t:
-        return t
-    t = re.sub(r'\[\s*\d+\s*\]', '', t)          # inline citation markers
-    t = re.sub(r'\s*Open in new window\s*', ' ', t)  # scraper artifact
-    t = re.sub(r'\s+([,.;:!?])', r'\1', t)       # space before punctuation
-    t = re.sub(r'\s+', ' ', t).strip()
-    return t
 
-def token_count(t):
-    return len(t.split()) if t else 0
+def count_tokens(text: str) -> int:
+    if not text:
+        return 0
+    return max(1, len(text) // 4)
 
-def sha16(s):
+
+def sha16(s: str) -> str:
+    import hashlib
     return hashlib.sha256(s.encode('utf-8')).hexdigest()[:16]
 
-def now_iso():
+
+def utcnow() -> str:
     return datetime.now(timezone.utc).isoformat(timespec='seconds')
 
-# ---------- stage 1: documents + blocks ----------
 
-def load_document(conn, ast):
+# ----------------------------------------------------------------------
+# Section derivation (stack walk)
+# ----------------------------------------------------------------------
+
+def derive_sections(blocks: list[dict], doc_id: str) -> list[dict]:
+    """
+    Walk blocks in order. Maintain a stack of (level, block_id, heading).
+    Each heading opens a section; non-heading blocks inherit the top
+    of stack as section_id.
+    """
+    sections = []
+    stack: list[tuple[int, str, str]] = []  # (level, block_id, heading)
+
+    # Root section for content before any heading
+    root_id = f"{doc_id}__root"
+    sections.append({
+        'section_id': root_id,
+        'doc_id': doc_id,
+        'parent_section_id': None,
+        'heading': None,
+        'heading_level': None,
+        'heading_path': '[]',
+        'first_block_id': None,
+        'last_block_id': None,
+        'token_count': 0,
+        'char_start': None,
+        'char_end': None,
+        'is_boilerplate': 0,
+    })
+
+    stats: dict[str, dict] = {root_id: {
+        'first': None, 'last': None, 'tok': 0, 'cs': None, 'ce': None
+    }}
+
+    for b in blocks:
+        if b['block_type'] == 'heading':
+            if b.get('is_orphan'):
+                # do not open a section, attach to current
+                cur_id = stack[-1][1] if stack else root_id
+                b['section_id'] = cur_id
+                s = stats.setdefault(cur_id, {'first': None, 'last': None, 'tok': 0, 'cs': None, 'ce': None})
+                if s['first'] is None:
+                    s['first'] = b['block_id']; s['cs'] = b['char_start']
+                s['last'] = b['block_id']; s['ce'] = b['char_end']
+                s['tok'] += b.get('token_count') or 0
+                continue
+
+            level = b.get('heading_level') or 1
+            while stack and stack[-1][0] >= level:
+                stack.pop()
+            parent_id = stack[-1][1] if stack else None
+
+            sid = b['block_id']
+            sections.append({
+                'section_id': sid,
+                'doc_id': doc_id,
+                'parent_section_id': parent_id,
+                'heading': b.get('text') or b.get('content', '').lstrip('# ').strip(),
+                'heading_level': level,
+                'heading_path': json.dumps(b.get('heading_path', [])),
+                'first_block_id': None,
+                'last_block_id': None,
+                'token_count': 0,
+                'char_start': b['char_start'],
+                'char_end': b['char_end'],
+                'is_boilerplate': int(bool(b.get('is_boilerplate'))),
+            })
+            stack.append((level, sid, sections[-1]['heading']))
+            b['section_id'] = parent_id
+            stats[sid] = {'first': None, 'last': None, 'tok': 0,
+                          'cs': b['char_start'], 'ce': b['char_end']}
+
+        else:
+            cur_id = stack[-1][1] if stack else root_id
+            b['section_id'] = cur_id
+            s = stats.setdefault(cur_id, {'first': None, 'last': None, 'tok': 0, 'cs': None, 'ce': None})
+            if s['first'] is None:
+                s['first'] = b['block_id']; s['cs'] = b['char_start']
+            s['last'] = b['block_id']; s['ce'] = b['char_end']
+            s['tok'] += b.get('token_count') or 0
+
+    # fill stats into sections
+    for sec in sections:
+        sid = sec['section_id']
+        s = stats.get(sid, {})
+        sec['first_block_id'] = s.get('first')
+        sec['last_block_id']  = s.get('last')
+        sec['token_count']    = s.get('tok', 0)
+        if sec['char_start'] is None:
+            sec['char_start'] = s.get('cs')
+        if sec['char_end'] is None:
+            sec['char_end'] = s.get('ce')
+
+    return sections
+
+
+# ----------------------------------------------------------------------
+# Atomization
+# ----------------------------------------------------------------------
+
+def atomize_block(b: dict) -> list[dict]:
+    """
+    Given a block dict, produce a list of atom dicts.
+    Rules:
+      - heading: skipped (becomes section boundary)
+      - paragraph / blockquote: sentence-split
+      - list_item: one atom
+      - image: one atom (caption)
+      - code / table / math: one atom (whole block)
+    """
+    bt = b['block_type']
+    text = b.get('text') or ''
+
+    if bt == 'heading':
+        return []
+
+    atoms = []
+
+    if bt == 'paragraph' or bt == 'blockquote':
+        if b.get('is_math'):
+            # whole block, single atom
+            if text.strip():
+                atoms.append(('math', text.strip()))
+        else:
+            for s in split_sentences(text):
+                atoms.append(('sentence', s))
+
+    elif bt == 'list_item':
+        t = re.sub(r'^\s*[-*+]\s+', '', text).strip()
+        t = re.sub(r'^\s*\d+\.\s+', '', t).strip()
+        if t:
+            atoms.append(('list_item', t))
+
+    elif bt == 'image':
+        if text.strip():
+            atoms.append(('caption', text.strip()))
+
+    elif bt == 'code':
+        if text.strip():
+            atoms.append(('code', text.strip()))
+
+    elif bt == 'table':
+        if text.strip():
+            atoms.append(('table', text.strip()))
+
+    else:
+        # unknown type — treat as prose
+        for s in split_sentences(text):
+            atoms.append(('sentence', s))
+
+    return atoms
+
+
+# ----------------------------------------------------------------------
+# Loading
+# ----------------------------------------------------------------------
+
+def _extract_source_url(blocks: list[dict], frontmatter: dict | None = None) -> str | None:
+    """Find the source URL from '# Source' block, or frontmatter."""
+    for i, b in enumerate(blocks):
+        if b['block_type'] == 'heading' and b.get('text', '').strip().lower() == 'source':
+            for j in range(i + 1, min(i + 3, len(blocks))):
+                t = blocks[j].get('text', '').strip()
+                if t.startswith('http'):
+                    return t
+    if frontmatter and frontmatter.get('source_url'):
+        return frontmatter['source_url']
+    return None
+
+
+def load_doc(conn: sqlite3.Connection, ast: dict, run_id: str | None = None) -> dict:
     doc_id = ast['doc_id']
     blocks = ast['blocks']
+    frontmatter = ast.get('frontmatter') or {}
 
-    title, source_uri = None, None
+    source_url = _extract_source_url(blocks, frontmatter) or f"unknown://{doc_id}"
+    content_hash = sha16(json.dumps(blocks, sort_keys=True))
+
+    title = None
     for b in blocks:
-        if b.get('is_boilerplate'):
-            continue
-        if title is None and b.get('block_type') == 'heading' \
-                and b.get('heading_level') == 1:
-            title = clean_text(b['content']).lstrip('# ').strip()
-        if source_uri is None and b.get('block_type') == 'paragraph' \
-                and (b.get('content') or '').startswith('http'):
-            source_uri = b['content'].strip()
-        if title and source_uri:
-            break
+        if b['block_type'] == 'heading' and b.get('heading_level') == 1:
+            if not b.get('is_boilerplate'):
+                t = b.get('text', '').lstrip('# ').strip()
+                if t and t != '-':
+                    title = t
+                    break
+    if not title and frontmatter.get('title'):
+        title = frontmatter['title']
 
-    content_hash = sha16(''.join(b.get('content', '') or '' for b in blocks))
+    now = utcnow()
 
-    now = now_iso()
+    # -- documents --
     conn.execute("""
-      INSERT INTO documents
-        (doc_id, source_path, source_uri, title, language, content_hash,
-         ingested_at, first_ingested_at, last_ingested_at)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+        INSERT INTO documents
+        (doc_id, source_url, canonical_url, title, author, published_at,
+         language, description, content_hash, frontmatter_json,
+         first_ingested_at, last_ingested_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       ON CONFLICT(doc_id) DO UPDATE SET
-        source_path      = excluded.source_path,
-        source_uri       = excluded.source_uri,
+        source_url       = excluded.source_url,
         title            = excluded.title,
+        author           = excluded.author,
+        published_at     = excluded.published_at,
         language         = excluded.language,
+        description      = excluded.description,
         content_hash     = excluded.content_hash,
-        ingested_at      = excluded.ingested_at,
+        frontmatter_json = excluded.frontmatter_json,
         last_ingested_at = excluded.last_ingested_at
-    """, (doc_id, ast.get('source_path'), source_uri, title, None,
-          content_hash, now, now, now))
+    """, (
+        doc_id, source_url, source_url, title,
+        frontmatter.get('author'),
+        frontmatter.get('published_at'),
+        frontmatter.get('language'),
+        frontmatter.get('description'),
+        content_hash,
+        json.dumps(frontmatter) if frontmatter else None,
+        now, now,
+    ))
 
+    # -- clear previous rows for this doc (idempotent re-ingest) --
+        # -- clear previous rows for this doc (idempotent re-ingest) --
+    # Delete in child-first order. Defer FK checks so intra-table
+    # ordering (e.g. self-referencing sections) doesn't matter.
+    conn.execute("PRAGMA defer_foreign_keys = ON")
+
+    # Deepest children first
+    conn.execute("""
+      DELETE FROM section_images
+      WHERE section_id IN (SELECT section_id FROM sections WHERE doc_id=?)
+    """, (doc_id,))
+    conn.execute("""
+      DELETE FROM footnote_refs
+      WHERE block_id IN (SELECT block_id FROM blocks WHERE doc_id=?)
+    """, (doc_id,))
+    conn.execute("DELETE FROM footnotes WHERE doc_id=?", (doc_id,))
+
+    # Enrichment tables that reference atoms
+    conn.execute("DELETE FROM selected_atoms WHERE doc_id=?", (doc_id,))
+    conn.execute("""
+      DELETE FROM atom_buckets
+      WHERE atom_id IN (SELECT atom_id FROM atoms WHERE doc_id=?)
+    """, (doc_id,))
+    conn.execute("DELETE FROM cluster_members WHERE doc_id=?", (doc_id,))
+
+    # Core chain, deepest first
+    conn.execute("DELETE FROM atoms WHERE doc_id=?", (doc_id,))
+    conn.execute("DELETE FROM links WHERE doc_id=?", (doc_id,))
+    conn.execute("DELETE FROM images WHERE doc_id=?", (doc_id,))
+    conn.execute("DELETE FROM blocks WHERE doc_id=?", (doc_id,))
+    conn.execute("DELETE FROM sections WHERE doc_id=?", (doc_id,))
+
+    # -- sections --
+    sections = derive_sections(blocks, doc_id)
+    for s in sections:
+        conn.execute("""
+          INSERT INTO sections
+            (section_id, doc_id, parent_section_id, heading, heading_level,
+             heading_path, first_block_id, last_block_id, token_count,
+             char_start, char_end, is_boilerplate)
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """, (
+            s['section_id'], s['doc_id'], s['parent_section_id'],
+            s['heading'], s['heading_level'], s['heading_path'],
+            s['first_block_id'], s['last_block_id'], s['token_count'],
+            s['char_start'], s['char_end'], s['is_boilerplate'],
+        ))
+
+    # -- blocks --
     for b in blocks:
         conn.execute("""
-          INSERT OR REPLACE INTO blocks
+          INSERT INTO blocks
             (block_id, doc_id, section_id, parent_block_id, prev_block_id, next_block_id,
              list_id, block_type, heading_path, order_index, char_start, char_end,
-             token_count, char_count, text, content_hash, is_orphan, is_boilerplate)
-          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+             char_count, token_count, text, raw_text, content_hash,
+             is_orphan, is_boilerplate, is_math, is_footnote, language, extra_json)
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """, (
-            b['block_id'], b['doc_id'], None,
+            b['block_id'], doc_id, b.get('section_id'),
             b.get('parent_block_id'), b.get('prev_block_id'), b.get('next_block_id'),
             b.get('list_id'), b['block_type'],
             json.dumps(b.get('heading_path', [])),
             b['position_index'], b['char_start'], b['char_end'],
-            b.get('token_count') or b.get('word_count') or token_count(clean_text(b.get('content', ''))),
-            b.get('char_count') or len(b.get('content', '') or ''),
-            clean_text(b.get('content', '')),
-            b.get('content_hash') or sha16(b.get('content', '') or ''),
-            1 if b.get('is_orphan') else 0,
-            1 if b.get('is_boilerplate') else 0,
+            b.get('char_count'), b.get('token_count'),
+            b.get('text', ''), b.get('content', ''),
+            b.get('content_hash'),
+            int(bool(b.get('is_orphan'))),
+            int(bool(b.get('is_boilerplate'))),
+            int(bool(b.get('is_math'))),
+            int(bool(b.get('is_footnote'))),
+            b.get('language'),
+            json.dumps({'language': b.get('language')}) if b.get('language') else None,
         ))
 
-# ---------- stage 2: section derivation ----------
-
-def derive_sections(conn, ast):
-    doc_id = ast['doc_id']
-    blocks = ast['blocks']
-
-    conn.execute("DELETE FROM atoms WHERE doc_id = ?", (doc_id,))
-    conn.execute("UPDATE blocks SET section_id = NULL WHERE doc_id = ?", (doc_id,))
-    conn.execute("DELETE FROM sections WHERE doc_id = ?", (doc_id,))
-
-    root_id = f"{doc_id}__root"
-    conn.execute("""
-      INSERT INTO sections
-        (section_id, doc_id, parent_section_id, heading, heading_level,
-         heading_path, first_block_id, last_block_id, token_count, char_start, char_end)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-    """, (root_id, doc_id, None, None, None, json.dumps([]), None, None, 0, None, None))
-
-    stack = [(0, root_id)]
-    stats = {}
-
+    # -- atoms --
+    atom_count = 0
     for b in blocks:
-        if b['block_type'] == 'heading':
-            level = b.get('heading_level') or 1
-            if b.get('is_orphan'):
-                # orphan heading: no section opened, folds into current section
-                cur = stack[-1][1]
-                conn.execute("UPDATE blocks SET section_id=? WHERE block_id=?",
-                             (cur, b['block_id']))
-                continue
-            while stack and stack[-1][0] >= level:
-                stack.pop()
-            parent = stack[-1][1] if stack else root_id
-            sid = b['block_id']
-            conn.execute("""
-              INSERT OR REPLACE INTO sections
-                (section_id, doc_id, parent_section_id, heading, heading_level,
-                 heading_path, first_block_id, last_block_id, token_count, char_start, char_end)
-              VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-            """, (
-                sid, doc_id, parent,
-                clean_text(b['content']).lstrip('# ').strip(),
-                level,
-                json.dumps(b.get('heading_path', [])),
-                None, None, 0,
-                b['char_start'], b['char_end'],
-            ))
-            stack.append((level, sid))
-            conn.execute("UPDATE blocks SET section_id=? WHERE block_id=?",
-                         (parent, b['block_id']))
-            stats.setdefault(sid, {'first': None, 'last': None, 'tok': 0,
-                                   'cs': b['char_start'], 'ce': b['char_end']})
-        else:
-            cur = stack[-1][1]
-            conn.execute("UPDATE blocks SET section_id=? WHERE block_id=?",
-                         (cur, b['block_id']))
-            st = stats.setdefault(cur, {'first': None, 'last': None, 'tok': 0,
-                                        'cs': b['char_start'], 'ce': b['char_end']})
-            if st['first'] is None:
-                st['first'] = b['block_id']; st['cs'] = b['char_start']
-            st['last'] = b['block_id']; st['ce'] = b['char_end']
-            st['tok'] += b.get('token_count') or b.get('word_count') or token_count(clean_text(b.get('content', '')))
-
-    for sid, st in stats.items():
-        conn.execute("""UPDATE sections
-                        SET first_block_id=?, last_block_id=?, token_count=?,
-                            char_start=?, char_end=?
-                        WHERE section_id=?""",
-                     (st['first'], st['last'], st['tok'], st['cs'], st['ce'], sid))
-
-# ---------- stage 3: atomization ----------
-
-def atomize(conn, ast):
-    doc_id = ast['doc_id']
-    conn.execute("DELETE FROM atoms WHERE doc_id = ?", (doc_id,))
-
-    for b in ast['blocks']:
         if b.get('is_boilerplate'):
             continue
-        bt = b['block_type']
-        if bt == 'heading':
-            continue
-        row = conn.execute("SELECT section_id FROM blocks WHERE block_id=?",
-                           (b['block_id'],)).fetchone()
-        sid = row[0] if row else None
-        raw = b.get('content', '') or ''
-
-        atoms = []
-        if bt == 'paragraph':
-            atoms = [('sentence', s) for s in split_sentences(clean_text(raw))]
-        elif bt == 'list_item':
-            t = clean_text(re.sub(r'^\s*[-*]\s*', '', raw))
-            if t: atoms = [('list_item', t)]
-        elif bt == 'image':
-            t = clean_text(raw)
-            if t: atoms = [('caption', t)]
-        elif bt == 'table':
-            if raw.strip(): atoms = [('table', raw.strip())]
-        else:
-            atoms = [('sentence', s) for s in split_sentences(clean_text(raw))]
-
-        for i, (atype, text) in enumerate(atoms):
+        atom_list = atomize_block(b)
+        for i, (atype, text) in enumerate(atom_list):
             if not text:
                 continue
-            aid = sha16(f"{b['block_id']}|{i}|{text}")
+            atom_id = sha16(f"{b['block_id']}|{i}|{text}")
             conn.execute("""
               INSERT OR REPLACE INTO atoms
                 (atom_id, block_id, doc_id, section_id, atom_type,
                  order_index, char_start, char_end, token_count, text, content_hash)
               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-            """, (aid, b['block_id'], doc_id, sid, atype, i,
-                  b['char_start'], b['char_end'], token_count(text), text, sha16(text)))
+            """, (
+                atom_id, b['block_id'], doc_id, b.get('section_id'),
+                atype, i,
+                b['char_start'], b['char_end'],
+                count_tokens(text), text, sha16(text),
+            ))
+            atom_count += 1
+
+    # -- images --
+    for b in blocks:
+        for img in b.get('image_refs') or []:
+            url = img.get('url')
+            if not url:
+                continue
+            image_id = sha16(url)
+            conn.execute("""
+              INSERT OR IGNORE INTO images
+                (image_id, block_id, doc_id, section_id, url, alt, created_at)
+              VALUES (?, ?, ?, ?, ?, ?, ?)
+            """, (
+                image_id, b['block_id'], doc_id, b.get('section_id'),
+                url, img.get('alt', ''), now,
+            ))
+
+    # -- links --
+    for b in blocks:
+        for i, lnk in enumerate(b.get('links') or []):
+            url = lnk.get('url')
+            if not url:
+                continue
+            link_id = sha16(f"{b['block_id']}|{i}|{url}")
+            conn.execute("""
+              INSERT OR REPLACE INTO links
+                (link_id, block_id, doc_id, url, text, is_internal, is_citation, order_index)
+              VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            """, (
+                link_id, b['block_id'], doc_id, url,
+                lnk.get('text', ''),
+                int(url.startswith('/') or source_url in url),
+                0, i,
+            ))
+
+    # -- doc_stages --
+    if run_id:
+        conn.execute("""
+          INSERT OR REPLACE INTO doc_stages
+            (run_id, doc_id, stage, status, started_at, finished_at, counts_json, error)
+          VALUES (?, ?, 'load', 'ok', ?, ?, ?, NULL)
+        """, (run_id, doc_id, now, now,
+              json.dumps({'blocks': len(blocks), 'atoms': atom_count,
+                          'sections': len(sections)})))
+
+    return {
+        'doc_id': doc_id,
+        'blocks': len(blocks),
+        'atoms': atom_count,
+        'sections': len(sections),
+    }
 
 
+# ----------------------------------------------------------------------
+# Main
+# ----------------------------------------------------------------------
 
+def main():
+    json_files = sorted(BLOCKS_DIR.glob('*.json'))
+    if not json_files:
+        print(f"no JSON files in {BLOCKS_DIR}")
+        return
 
-# ---------- main ----------
+    conn = connect()
+    run_id = sha16(f"ingest-{utcnow()}")
+    conn.execute("""
+      INSERT INTO pipeline_runs (run_id, started_at, status, stages_json)
+      VALUES (?, ?, 'running', ?)
+    """, (run_id, utcnow(), json.dumps(['load'])))
 
-def main(db_path=DB_PATH, schema_path=SCHEMA_PATH, inputs=INPUTS):
-    conn = sqlite3.connect(db_path)
-    with open(schema_path, encoding="utf-8") as schema_file:
-        conn.executescript(schema_file.read())
+    total = {'docs': 0, 'blocks': 0, 'atoms': 0, 'sections': 0}
 
-    paths = []
-    for inp in inputs:
-        if os.path.isdir(inp):
-            paths.extend(glob.glob(os.path.join(inp, '*.json')))
-        else:
-            paths.extend(glob.glob(inp))
+    for jf in json_files:
+        try:
+            ast = json.loads(jf.read_text(encoding='utf-8'))
+        except Exception as e:
+            print(f"skip {jf.name}: {e}")
+            continue
+        r = load_doc(conn, ast, run_id)
+        total['docs'] += 1
+        total['blocks'] += r['blocks']
+        total['atoms'] += r['atoms']
+        total['sections'] += r['sections']
+        print(f"{r['doc_id'][:55]:55s}  "
+              f"{r['blocks']:4d} blocks  "
+              f"{r['atoms']:4d} atoms  "
+              f"{r['sections']:3d} sections")
 
-    for p in paths:
-        print(f"ingesting {os.path.basename(p)}", file=sys.stderr)
-        with open(p, encoding="utf-8") as f:
-            ast = json.load(f)
-        load_document(conn, ast)
-        derive_sections(conn, ast)
-        atomize(conn, ast)
-        conn.commit()
-
+    conn.execute("""
+      UPDATE pipeline_runs SET status='completed', finished_at=? WHERE run_id=?
+    """, (utcnow(), run_id))
+    conn.commit()
     conn.close()
-    print(f"done: {len(paths)} docs", file=sys.stderr)
+
+    print()
+    print(f"loaded: {total['docs']} docs, "
+          f"{total['blocks']} blocks, "
+          f"{total['atoms']} atoms, "
+          f"{total['sections']} sections")
+
 
 if __name__ == '__main__':
     main()

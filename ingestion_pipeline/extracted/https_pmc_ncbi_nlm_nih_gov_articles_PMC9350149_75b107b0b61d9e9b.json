@@ -1,0 +1,280 @@
+{
+  "source": "https://pmc.ncbi.nlm.nih.gov/articles/PMC9350149/",
+  "metadata": {
+    "title": "mRNA vaccines: a transformative technology with applications beyond COVID‐19 - PMC",
+    "author": null,
+    "published_at": null,
+    "canonical_url": "https://pmc.ncbi.nlm.nih.gov/articles/PMC9350149/",
+    "language": "en",
+    "description": null
+  },
+  "blocks": [
+    {
+      "type": "list",
+      "ordered": false,
+      "items": [
+        "Search in PMC",
+        "Search in PubMed",
+        "View in NLM Catalog",
+        "Add to search"
+      ]
+    },
+    {
+      "type": "heading",
+      "level": 1,
+      "text": "mRNA vaccines: a transformative technology with applications beyond COVID‐19"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "text": "Isabella Overmars"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "text": "George Au‐Yeung"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "text": "Terence M Nolan"
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "text": "Andrew C Steer"
+    },
+    {
+      "type": "list",
+      "ordered": false,
+      "items": [
+        "Author information",
+        "Article notes",
+        "Copyright and License information"
+      ]
+    },
+    {
+      "type": "paragraph",
+      "text": "E‐mail: belle.overmars@mcri.edu.au",
+      "images": []
+    },
+    {
+      "type": "paragraph",
+      "text": "Corresponding author.",
+      "images": []
+    },
+    {
+      "type": "paragraph",
+      "text": "Revised 2022 Feb 14; Received 2021 Nov 10; Accepted 2022 Mar 28; Issue date 2022 Jul.",
+      "images": []
+    },
+    {
+      "type": "paragraph",
+      "text": "Keywords: Vaccination, Microbiology, Virus diseases, Vaccines, Vaccine preventable disease, Preventive medicine",
+      "images": []
+    },
+    {
+      "type": "paragraph",
+      "text": "This article is being made freely available through PubMed Central as part of the COVID-19 public health emergency response. It can be used for unrestricted research re-use and analysis in any form or by any means with acknowledgement of the original source, for the duration of the public health emergency.",
+      "images": []
+    },
+    {
+      "type": "blockquote",
+      "text": "mRNA vaccines can be used for broader infectious diseases prevention and cancer therapy"
+    },
+    {
+      "type": "paragraph",
+      "text": "Messenger RNA (mRNA) vaccine technology, decades in development as a therapy for cancer and for prevention of infectious diseases but not yet realising a licensed product, 1 was rapidly implemented to accelerate the creation of severe acute respiratory syndrome coronavirus 2 (SARS‐CoV‐2) vaccines. Yet their spectacular success against SARS‐CoV‐2 provides just a glimpse of their full potential. This article describes how mRNA vaccines are made and how they work, and their potential for further infectious disease prevention and cancer therapy.",
+      "images": []
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "text": "How mRNA vaccines are made and how they work"
+    },
+    {
+      "type": "paragraph",
+      "text": "mRNA is a single‐stranded molecule comprised of nucleic acid bases which function to provide a genetic code for a specific protein. During normal cellular processes, the parts of DNA‐containing genes are transcribed into mRNA molecules in the cell nucleus, and the mRNA moves into the cytoplasm to facilitate protein assembly. The mRNA vaccine, however, is designed in silico (on a computer) using genomic sequences of the antigen of interest to initiate an immune response. Synthetic nucleic acid bases (adenine, uracil, guanine and cytosine) are used to make mRNA. The mRNA of interest is created by using DNA, and mRNA is transcribed from that DNA, in vitro (not in a cell) and capped with a poly‐adenine tail to prevent degradation. The output is purified and put into the delivery mechanism before it is tested for quality, potency and other characteristics. There are several delivery methods that can be used to get the mRNA into cells, but lipid nanoparticles are favoured. 1 These particles themselves have a complex design and manufacturing process. 2 Adjuvants may also be used. With the right facilities, large‐scale manufacturing of the final mRNA vaccine can occur rapidly.",
+      "images": []
+    },
+    {
+      "type": "paragraph",
+      "text": "mRNA vaccines deliver into the host an mRNA that contains a code for a specific antigen. mRNA enters host cell ribosomes where it is translated into the coded protein. This typically leads to the host cell displaying the protein on its surface to promote cell‐mediated immunity, and the host cell releases proteins outside of the cell which are taken up and presented by other antigen‐presenting cells to promote antibody‐mediated immunity ( Box 1 ).",
+      "images": []
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "text": "Box 1. Conventional messenger RNA (mRNA) vaccine mechanism of action."
+    },
+    {
+      "type": "paragraph",
+      "text": "",
+      "images": [
+        {
+          "src": "https://cdn.ncbi.nlm.nih.gov/pmc/blobs/0775/9350149/f27eec7d139d/MJA2-217-71-g001.jpg",
+          "alt": "Box 1"
+        }
+      ]
+    },
+    {
+      "type": "image",
+      "src": "https://cdn.ncbi.nlm.nih.gov/pmc/blobs/0775/9350149/f27eec7d139d/MJA2-217-71-g001.jpg",
+      "alt": "Box 1"
+    },
+    {
+      "type": "paragraph",
+      "text": "MHC = major histocompatibility complex; vax = vaccine. The figure shows how conventional mRNA vaccines, with lipid nanoparticle coats, stimulate multiple pathways of the immune response due to involvement of normal cellular processes. ( 1 ) mRNA is delivered to into the body through a conventional mRNA vaccine, made up of mRNA coding for an antigen of interest surrounded by a lipid nanoparticle. ( 2 ) mRNA is delivered to, and enters, the cell by fusion of the lipid nanoparticle with the cell membrane. ( 3 and 4 ) mRNA enters the host cell ribosome where it is translated into the coded antigen. mRNA is then degraded through normal cellular processes. ( 5 ) The antigen can then stimulate the immune system in different ways. The antigen can be released outside of the cell, where it is taken up by a different antigen‐presenting cell (represented as the same cell in this figure, for simplicity), and presents the antigen on the cell surface via an MHC class II molecule, stimulating CD4+ T cells. ( 6 ) The antigen can be presented on the cell surface in an MHC class I molecule, stimulating CD8+ T cells. ( 7 ) The antigen can also present itself on the cell surface, where it can be recognised by antibodies and directly stimulate B cells.",
+      "images": []
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "text": "Advantages and limitations of mRNA vaccines"
+    },
+    {
+      "type": "paragraph",
+      "text": "mRNA has low toxicity because it is quickly degraded by normal cellular processes, 2 and because design developments have allowed stimulation of cellular and humoral immune responses without excessive immunogenicity. 3 A potential advantage of mRNA over DNA vaccines is the obviation of risk of integration into the host genome, albeit theoretical and likely rare. 2 In addition, mRNA vaccines are a non‐infectious alternative to other vaccine types such as attenuated or inactivated vaccines, which means there is no possibility for an infection to occur from the vaccine itself. 2 Furthermore, mRNA vaccines do not rely on non or mildly pathogenic viral vectors as a delivery method, which in some cases can cause issues of immune‐based clotting disorders, such as thrombosis with thrombocytopenia syndrome (TTS), and antivector immunity. TTS has been rarely observed following administration of the adenoviral vector coronavirus disease 2019 (COVID‐19) vaccines, including those from AstraZeneca and Johnson and Johnson/Janssen. 4 Antivector immunity is when the immune system responds to the viral vector and not the target antigen, as has been reported when using adenovirus vectors. 5 The manufacturing process also has several benefits, including in vitro development and use of synthetic materials, meaning there are minimal contaminants compared with some other methods. Moreover, mRNA vaccines can be rapidly synthesised after the required sequence is known, and modifications can be expedited, which is advantageous in responding to emerging immune‐evasive variants. Although the advantages of mRNA vaccines compared with other vaccine types have been explored, existing vaccine approaches remain incredibly successful in averting millions of deaths from vaccine‐preventable diseases each year.",
+      "images": []
+    },
+    {
+      "type": "paragraph",
+      "text": "As mRNA can be degraded by cellular processes, it can be easily destroyed. 3 Furthermore, mRNA and lipid nanoparticles are thermodynamically unstable, and need to be kept at cold temperatures for storage and transport, some at ‐20°C and as low as ‐80°C, often requiring specialised ultrarefrigeration equipment and thawing before use. 6 This presents serious limitations for settings unable to meet these cold chain logistics, especially in low and middle‐income countries. Safety concerns have emerged with mild‐to‐moderate myocarditis and pericarditis rarely following SARS‐CoV‐2 mRNA vaccination, mainly in young male adults, albeit without fatal consequences. 7 While the mechanism of action is yet to be elucidated, it may be specific to the antigen target used, or general to all mRNA vaccines if the immune response reacts to the presence of mRNA itself. 8 Close monitoring of this safety signal and investigation into its occurrence will be a crucial focus in the development of future mRNA vaccines.",
+      "images": []
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "text": "Application to infectious diseases"
+    },
+    {
+      "type": "paragraph",
+      "text": "mRNA vaccines can be used prophylactically where they are administered to prevent infection or disease, or therapeutically where they are delivered after infection to support the immune response. Viruses are an ideal target group of pathogens for prophylactic mRNA vaccines, as they are structurally smaller and less complex than bacteria, parasites or fungi. A broad portfolio of candidate prophylactic mRNA vaccines targeting viruses is under development ( Box 2 ). 9 , 10 , 11 , 12 Bacteria and parasites have a multiplicity of antigens, and thus choosing a target can be challenging. Furthermore, parasites have complex reproduction cycles, so that antigens are not always present on the pathogen. 3 Despite these barriers, some bacterial and parasite mRNA vaccine candidates have shown success in mouse models, including for group A and B streptococci 13 and for malaria. 14 In addition, mRNA vaccines for infectious diseases can be applied therapeutically, as opposed to prophylactically, with some in development for human immunodeficiency virus (HIV). The vaccines being tested for HIV involve using mRNA that codes for antigens and activation signals, delivered using dendritic cells, to support the immune response in patients already infected with HIV. 15",
+      "images": []
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "text": "Box 2. Messenger RNA (mRNA) prophylactic vaccines to viruses in development (non‐severe acute respiratory syndrome coronavirus 2 [SARS‐CoV‐2]) 9‐12 ."
+    },
+    {
+      "type": "table",
+      "markdown": "| Pathogen | Company (code) | Clinical trial number | Vaccine development phase |  |  |  |\n| --- | --- | --- | --- | --- | --- | --- |\n| Preclinical | Phase 1 | Phase 2 | Phase 3 |  |  |  |\n| Chikungunya virus | Moderna (mRNA‐1388) | NCT03325075 | Completed | Completed |  |  |\n| Cytomegalovirus | Moderna (mRNA‐1647) | NCT05085366 | Completed | Completed | Completed | Planned |\n| Moderna (mRNA‐1647 and mRNA‐1443) | NCT03382405 | Completed | Completed |  |  |  |\n| Epstein–Barr virus | Moderna (mRNA‐1189) | Unavailable | Ongoing |  |  |  |\n| HIV | Moderna (mRNA‐1644) | na | Ongoing |  |  |  |\n| Moderna (mRNA‐1574) | na | Ongoing |  |  |  |  |\n| BioNTech (na) | na | Ongoing |  |  |  |  |\n| hMPV + PIV3 | Moderna (mRNA‐1653) | NCT04144348 | Completed | Completed |  |  |\n| Influenza virus | Moderna (mRNA‐1440–H10N8) | NCT03076385 | Completed | Completed |  |  |\n| Moderna (mRNA‐1851–H7N9) | NCT03345043 | Completed | Completed |  |  |  |\n| Moderna (mRNA‐10‐10,20,30) | NCT04956575 | Completed | Ongoing |  |  |  |\n| CureVac (CV7301) | na | Ongoing |  |  |  |  |\n| BioNTech (BNT161) | na | Ongoing |  |  |  |  |\n| Sanofi and Translate Bio (MRT540‐0,1) | Unavailable | Completed | Ongoing |  |  |  |\n| Lassa virus | CureVac (na) | na | Ongoing |  |  |  |\n| Nipah virus | Moderna (mRNA‐1215) | na | Ongoing |  |  |  |\n| Rabies virus | CureVac (CV7202) | NCT03713086 | Completed | Ongoing |  |  |\n| RSV | Moderna (mRNA‐1345) | NCT04528719 | Completed | Ongoing |  |  |\n| Moderna (mRNA‐1777) | Unavailable | Completed | Completed |  |  |  |\n| Moderna (mRNA‐1172) | Unavailable | Completed | Ongoing |  |  |  |\n| CureVac (na) | na | Ongoing |  |  |  |  |\n| Varicella‐zoster virus | Moderna (mRNA‐1278) | na | Ceased |  |  |  |\n| Zika virus | Moderna (mRNA‐1893) | NCT04917861 | Completed | Completed | Planned |  |\n| Moderna (mRNA‐1325) | NCT03014089 | Completed | Completed |  |  |  |"
+    },
+    {
+      "type": "paragraph",
+      "text": "HIV = human immunodeficiency virus; hMPV = human metapneumovirus; na = not applicable; mRNA = messenger RNA; PIV3 = human parainfluenza virus type 3; RSV = respiratory syncytial virus.",
+      "images": []
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "text": "Applications in cancer"
+    },
+    {
+      "type": "paragraph",
+      "text": "The therapeutic role of vaccines in cancer control has been extensively investigated over the past two decades, with limited success in advanced disease. More recently, research in tumour‐specific vaccines has been reignited, spurred on by dramatic and durable responses seen with immune checkpoint inhibitors in certain malignancies, coupled with improvements in technology facilitating better design and delivery systems. The explosion of the genomic era has also enabled the identification of tumour‐specific antigens that are not subject to immune tolerance. These tumour “neoantigens”, unique to individual tumours, may represent a personalised patient‐specific vaccine strategy that has already shown some promise in the clinic. 16 Understanding which of the tumour neoantigens are important immunologically and refining the algorithms used to define them remain a critical aspect of therapeutic vaccine development in cancer. 17 mRNA vaccines are ideal for therapeutic use because they can be rapidly designed and manufactured, especially to improve the immune response to neoantigens. 3 Those in development are listed in Box 3 . 18",
+      "images": []
+    },
+    {
+      "type": "heading",
+      "level": 3,
+      "text": "Box 3. mRNA therapeutic vaccines for cancer control with a registered trial 18 ."
+    },
+    {
+      "type": "table",
+      "markdown": "| Targeted cancer | Sponsor | Trial number | Vaccine type (vaccine name * ) | Vaccine development phase |  |  |\n| --- | --- | --- | --- | --- | --- | --- |\n| Phase 1 | Phase 2 | Phase 3 |  |  |  |  |\n| Brain | Guangdong 999 Brain Hospital | NCT02808416 | Personalised mRNA cellular vaccine (PerCellVac3) | Ongoing |  |  |\n| Breast or melanoma | Inge Marie Svane | NCT00978913 | mRNA transfected dendritic cell vaccine | Ongoing |  |  |\n| General | National Cancer Institute | NCT03480152 | Personalised mRNA vaccine (NCI‐4650) | Ongoing | Ongoing |  |\n| Melanoma | ModernaTX | NCT03897881 | Personalised mRNA vaccine (mRNA‐4157) | Completed | Ongoing |  |\n| Oesophageal and/or non‐small cell lung | Stemirna Therapeutics | NCT03908671 | Personalised mRNA vaccine | Ongoing |  |  |\n| Ludwig Institute for Cancer Research | NCT03164772 | mRNA vaccine (BI 1361849) | Ongoing | Ongoing |  |  |\n| Ovarian | University Medical Center Groningen | NCT04163094 | mRNA vaccine (W_ova1) | Ongoing |  |  |\n| Oslo University Hospital | EUCTR2010‐020233‐56‐NO | mRNA transfected dendritic cell vaccine | Ongoing | Ongoing |  |  |\n| Steinar Aamdal | NCT01334047 | Personalised mRNA transfected dendritic cell vaccine (DC‐006) | Ongoing | Ongoing |  |  |\n| Prostate | Center for Cancer Immunotherapy and Department of Oncology, Herlev Hospital | EUCTR2011‐001602‐10‐DK | mRNA transfected dendritic cell vaccine (Taxotere) | Completed | Ongoing |  |\n| Oslo University Hospital | NCT01278914 | mRNA transfected dendritic cell vaccine | Ongoing | Ongoing |  |  |\n| Oslo University Hospital | NCT01197625 | mRNA transfected dendritic cell vaccine (DC‐005) | Ongoing | Ongoing |  |  |\n| Oslo University Hospital | EUCTR2010‐018770‐20‐NO | Personalised mRNA transfected dendritic cell vaccine | Ongoing | Ongoing |  |  |\n| University of Florida | NCT01153113 | Personalised mRNA transfected dendritic cell vaccine (hTERT mRNA DC) | Completed | Ongoing |  |  |\n| Solid tumours | Stemirna Therapeutics | ChiCTR1900023000 | Personalised mRNA vaccine | Ongoing |  |  |\n| University Hospital, Antwerp | NCT01291420 | Personalised mRNA transfected dendritic cell vaccine | Ongoing | Ongoing |  |  |"
+    },
+    {
+      "type": "paragraph",
+      "text": "mRNA = messenger RNA.",
+      "images": []
+    },
+    {
+      "type": "paragraph",
+      "text": "If available.",
+      "images": []
+    },
+    {
+      "type": "paragraph",
+      "text": "Clinically, it remains unclear which setting is likely to benefit most from the use of therapeutic tumour vaccines. Immunogenically “hot” tumours, which have high levels of immune cell infiltration, typically respond well to immune checkpoint inhibitors, and the addition of a therapeutic vaccine may not be required to induce an immune response. In contrast, the use of a vaccine in “cold” tumours, with limited infiltration, may not be sufficient to overcome the various mechanisms of immune exclusion in these tumour types. The disease setting is also likely to be influential — advanced, metastatic disease is typically considered immune‐suppressive, with tumours surrounded by an immunosuppressive micro‐environment. Therefore, therapeutic tumour vaccines are now being tested with different adjuvants or in “minimal residual disease” environments to avoid these challenges. The degree of uncertainty but also the distinct opportunity of therapeutic tumour vaccines is reflected in the vast number of active clinical trials across different tumour types and settings. 19",
+      "images": []
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "text": "Future of mRNA vaccines"
+    },
+    {
+      "type": "paragraph",
+      "text": "mRNA vaccine development will continue to accelerate, spurred on by the success of SARS‐CoV‐2 vaccines, and further improvements to the technology may mitigate some of the current limitations and facilitate broader reach. For example, strategies to make the mRNA vaccines self‐amplify, meaning the mRNA delivered in the vaccine encodes not only the antigen of interest but also the replication machinery that amplifies the mRNA, will reduce the amount of mRNA needed in each vaccine. 20 This could also facilitate the creation of multivalent vaccines, one of the most powerful opportunities for this technology, allowing multiple antigen targets, for the same or different pathogens, to be delivered in one vaccine lipid nanoparticle. Moderna is already in phase 1 with a seasonal influenza quadrivalent product, and is developing other combination vaccines, including one for human metapneumovirus and parainfluenza virus. To progress mRNA vaccine development, existing challenges need to be addressed to ensure equitable access and expansion. To do this, manufacturing facilities with advanced mRNA technology may be required in multiple locations globally. Testing of different additives, adjuvants and delivery mechanisms will be important to increase the stability of mRNA vaccines at higher temperatures and to therefore facilitate equitable access. mRNA technology has progressed rapidly over the past 2 years in response to the global COVID‐19 pandemic, revealing new and exciting avenues for prophylactic and therapeutic vaccine development.",
+      "images": []
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "text": "Competing interests"
+    },
+    {
+      "type": "paragraph",
+      "text": "No relevant disclosures.",
+      "images": []
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "text": "Provenance"
+    },
+    {
+      "type": "paragraph",
+      "text": "Not commissioned; externally peer reviewed.",
+      "images": []
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "text": "Acknowledgements"
+    },
+    {
+      "type": "paragraph",
+      "text": "We thank Hilary Bruce for their help finalising the figure.",
+      "images": []
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "text": "References"
+    },
+    {
+      "type": "list",
+      "ordered": false,
+      "items": [
+        "1. Chaudhary N, Weissman D, Whitehead KA. mRNA vaccines for infectious diseases: principles, delivery and clinical translation. Nat Rev Drug Discov 2021; 20: 817‐838. [ DOI ] [ PMC free article ] [ PubMed ] [ Google Scholar ]",
+        "2. Pardi N, Hogan MJ, Porter FW, Weissman D. mRNA vaccines — a new era in vaccinology. Nat Rev Drug Discov 2018; 17: 261‐279. [ DOI ] [ PMC free article ] [ PubMed ] [ Google Scholar ]",
+        "3. Wang Y, Zhang Z, Luo J, et al. mRNA vaccine: a potential therapeutic strategy. Mol Cancer 2021; 20: 33. [ DOI ] [ PMC free article ] [ PubMed ] [ Google Scholar ]",
+        "4. Cheng D, Machingaifa F, Buntsma D, McGuire R. Thrombosis with thrombocytopenia syndrome (TTS) [website]. Melbourne: Melbourne Vaccine Education Centre, 2021. https://mvec.mcri.edu.au/references/thrombosis‐with‐thrombocytopenia‐syndrome (viewed Nov 2021). [ Google Scholar ]",
+        "5. Sakurai F, Tachibana M, Mizuguchi H. Adenovirus vector‐based vaccine for infectious diseases. Drug Metab Pharmacokinet 2022; 42: 100432. [ DOI ] [ PMC free article ] [ PubMed ] [ Google Scholar ]",
+        "6. Crommelin DJA, Anchordoquy TJ, Volkin DB, et al. Addressing the cold reality of mRNA vaccine stability. J Pharm Sci 2021; 110: 997‐1001. [ DOI ] [ PMC free article ] [ PubMed ] [ Google Scholar ]",
+        "7. Centers for Disease Control and Prevention. Myocarditis and pericarditis [website]. Atlanta, GA: CDC, 2021. https://www.cdc.gov/coronavirus/2019‐ncov/vaccines/safety/myocarditis.html (viewed Oct 2021). [ Google Scholar ]",
+        "8. Bozkurt B, Kamat I, Hotez PJ. Myocarditis with COVID‐19 mRNA vaccines. Circulation 2021; 144: 471‐484. [ DOI ] [ PMC free article ] [ PubMed ] [ Google Scholar ]",
+        "9. BioNTech. Pipeline: breakthrough technologies across four different drug classes to revolutionize medicine [website]. Mainz: BioNTech, 2021. https://biontech.de/science/pipeline (viewed Sept 2021). [ Google Scholar ]",
+        "10. CureVac. Pipeline: see where we’re heading [website]. Tübingen: CureVac AG, 2021. https://www.curevac.com/en/pipeline/ (viewed Sept 2021). [ Google Scholar ]",
+        "11. Moderna . Moderna's pipeline [website]. Massachusetts: Moderna, 2021. https://www.modernatx.com/pipeline (viewed Sept 2021).",
+        "12. Translate Bio (Sanofi). Translate Bio pipeline [website]. Massachusetts: Translate Bio, 2021. https://translate.bio/pipeline/ (viewed Oct 2021). [ Google Scholar ]",
+        "13. Maruggi G, Chiarot E, Giovani C, et al. Immunogenicity and protective efficacy induced by self‐amplifying mRNA vaccines encoding bacterial antigens. Vaccine 2017; 35: 361‐368. [ DOI ] [ PubMed ] [ Google Scholar ]",
+        "14. Baeza Garcia A, Siu E, Sun T, et al. Neutralization of the Plasmodium ‐encoded MIF ortholog confers protective immunity against malaria infection. Nat Commun 2018; 9: 2714. [ DOI ] [ PMC free article ] [ PubMed ] [ Google Scholar ]",
+        "15. D’haese S, Lacroix C, Garcia F, et al. Off the beaten path: novel mRNA‐nanoformulations for therapeutic vaccination against HIV. J Control Release 2021; 330: 1016‐1033. [ DOI ] [ PubMed ] [ Google Scholar ]",
+        "16. Ott P, Hu Z, Keskin D, et al. An immunogenic personal neoantigen vaccine for patients with melanoma. Nature 2017; 547: 217‐221. [ DOI ] [ PMC free article ] [ PubMed ] [ Google Scholar ]",
+        "17. Wells D, van Buuren M, Dang K, et al. Key parameters of tumor epitope immunogenicity revealed through a consortium approach improve neoantigen prediction. Cell 2020; 183: 818‐834. [ DOI ] [ PMC free article ] [ PubMed ] [ Google Scholar ]",
+        "18. International Clinical Trials Registry Platform . International Clinical Trials Registry Platform Search Portal. [website]. Geneva: World Health Organization, 2021. https://trialsearch.who.int/ (viewed Dec 2021).",
+        "19. Beck J, Reidenbach D, Salomon N, et al. mRNA therapeutics in cancer immunotherapy. Mol Cancer 2021; 20: 69. [ DOI ] [ PMC free article ] [ PubMed ] [ Google Scholar ]",
+        "20. Brito LA, Kommareddy S, Maione D, et al. Self‐amplifying mRNA vaccines. Adv Genet 2015; 89: 179‐233. [ DOI ] [ PubMed ] [ Google Scholar ]"
+      ]
+    },
+    {
+      "type": "paragraph",
+      "text": "Articles from The Medical Journal of Australia are provided here courtesy of Wiley",
+      "images": []
+    }
+  ]
+}
