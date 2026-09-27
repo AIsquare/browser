@@ -25,10 +25,8 @@ from datetime import datetime, timezone
 from dotenv import load_dotenv
 load_dotenv()
 
-from dotenv import load_dotenv
-load_dotenv()
-
 from db import connect
+
 try:
     from typesafe_sdk import Choice, Noul, TypeSafeClient
 except ImportError:
@@ -37,7 +35,7 @@ except ImportError:
 
 
 MODEL = os.environ.get('TYPESAFE_MODEL', 'jev-latest')
-BATCH = 20  # headings per request
+BATCH = 20
 
 ROLES = {
     "Overview":  "Definition, summary, or introduction of what this thing fundamentally is.",
@@ -121,15 +119,13 @@ def classify(client, batch):
 
 
 def store(conn, results):
-    # Mark chrome sections
     for sid, ans in results.items():
         if ans['is_chrome'] > 0.7:
             conn.execute(
-                "UPDATE sections SET is_boilerplate = 1 WHERE section_id = ?",
+                "UPDATE sections SET is_boilerplate = 1 WHERE section_id = %s",
                 (sid,)
             )
 
-    # Assign atoms in non-chrome sections
     conn.execute("DELETE FROM atom_buckets")
 
     sec_to_role = {
@@ -145,7 +141,9 @@ def store(conn, results):
     """).fetchall()
 
     batch, counts = [], {}
-    for atom_id, section_id in rows:
+    for r in rows:
+        atom_id = r['atom_id']
+        section_id = r['section_id']
         if section_id not in sec_to_role:
             continue
         role, conf = sec_to_role[section_id]
@@ -153,19 +151,31 @@ def store(conn, results):
         counts[role] = counts.get(role, 0) + 1
 
         if len(batch) >= 1000:
-            conn.executemany("""
-              INSERT OR REPLACE INTO atom_buckets
-                (atom_id, topic_id, bucket, method, confidence)
-              VALUES (?, ?, ?, ?, ?)
-            """, batch)
+            with conn.cursor() as cur:
+                cur.executemany("""
+                  INSERT INTO atom_buckets
+                    (atom_id, topic_id, bucket, method, confidence)
+                  VALUES (%s, %s, %s, %s, %s)
+                  ON CONFLICT (atom_id) DO UPDATE SET
+                    topic_id   = EXCLUDED.topic_id,
+                    bucket     = EXCLUDED.bucket,
+                    method     = EXCLUDED.method,
+                    confidence = EXCLUDED.confidence
+                """, batch)
             batch = []
 
     if batch:
-        conn.executemany("""
-          INSERT OR REPLACE INTO atom_buckets
-            (atom_id, topic_id, bucket, method, confidence)
-          VALUES (?, ?, ?, ?, ?)
-        """, batch)
+        with conn.cursor() as cur:
+            cur.executemany("""
+              INSERT INTO atom_buckets
+                (atom_id, topic_id, bucket, method, confidence)
+              VALUES (%s, %s, %s, %s, %s)
+              ON CONFLICT (atom_id) DO UPDATE SET
+                topic_id   = EXCLUDED.topic_id,
+                bucket     = EXCLUDED.bucket,
+                method     = EXCLUDED.method,
+                confidence = EXCLUDED.confidence
+            """, batch)
 
     return counts
 
@@ -179,7 +189,7 @@ def main():
     run_id = sha16(f"outline-{utcnow()}")
     conn.execute("""
       INSERT INTO pipeline_runs (run_id, started_at, status, stages_json)
-      VALUES (?, ?, 'running', ?)
+      VALUES (%s, %s, 'running', %s)
     """, (run_id, utcnow(), '["outline"]'))
 
     headings = load_headings(conn)
@@ -200,11 +210,10 @@ def main():
     counts = store(conn, results)
 
     conn.execute("""
-      UPDATE pipeline_runs SET status='completed', finished_at=? WHERE run_id=?
+      UPDATE pipeline_runs SET status='completed', finished_at=%s WHERE run_id=%s
     """, (utcnow(), run_id))
     conn.commit()
 
-    # Report
     print()
     print(f"atoms with bucket : {sum(counts.values())}")
     print()

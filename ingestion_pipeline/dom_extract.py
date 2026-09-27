@@ -15,10 +15,9 @@ Output per doc:
 
 Usage:
   python dom_extract.py --urls urls.txt
-  python dom_extract.py --urls urls.txt --out extracted/ --db corpus_v1.db
+  python dom_extract.py --urls urls.txt --out extracted/
 
 Env / flags:
-  --concurrency N      parallel fetches (default 3)
   --rate-limit SEC     min seconds between fetches to same domain (default 2)
   --timeout MS         page timeout in ms (default 60000)
   --max-retries N      fetch retries (default 2)
@@ -37,16 +36,17 @@ import os
 import re
 import sys
 import time
+import urllib.request
+import urllib.error
 from collections import defaultdict
 from datetime import datetime, timezone
 from pathlib import Path
-import urllib.error
-import urllib.request
 from urllib.parse import urljoin, urlparse, urldefrag, urlunparse, parse_qsl, urlencode
 
 from bs4 import BeautifulSoup, Tag
 
 from db import connect
+
 # Robots.txt parsers — prefer protego (modern, handles wildcards + crawl-delay)
 try:
     from protego import Protego
@@ -63,7 +63,6 @@ except ImportError:
     HAS_PLAYWRIGHT = False
 
 
-
 # =====================================================================
 # Configuration
 # =====================================================================
@@ -74,23 +73,19 @@ USER_AGENT = (
     "Chrome/131.0.0.0 Safari/537.36"
 )
 
-# Tracking params stripped from URLs during canonicalization
 TRACKING_PARAMS = {
     'utm_source', 'utm_medium', 'utm_campaign', 'utm_term', 'utm_content',
     'utm_id', 'fbclid', 'gclid', 'mc_cid', 'mc_eid', 'ref', 'ref_src',
     'source', 'igshid', 'yclid',
 }
 
-# Tags always treated as chrome
 BOILERPLATE_TAGS = {
     'script', 'style', 'noscript', 'svg', 'canvas', 'iframe',
     'nav', 'aside', 'header', 'footer', 'form',
 }
 
-# ARIA roles always treated as chrome
 BOILERPLATE_ROLES = {'navigation', 'banner', 'contentinfo', 'search'}
 
-# CSS class hints that reliably signal chrome across the web
 BOILERPLATE_CLASS_HINTS = {
     'cookie', 'consent', 'gdpr', 'newsletter', 'subscribe',
     'advert', 'advertisement', 'sponsored', 'promo',
@@ -106,8 +101,6 @@ BOILERPLATE_CLASS_HINTS = {
     'comment-form', 'login-form', 'signup-form',
 }
 
-# Headings whose text is exactly one of these — skip the heading and
-# everything under it until the next non-chrome heading appears.
 BOILERPLATE_HEADING_TEXT = {
     'share', 'share this', 'share this article', 'share article',
     'tweet', 'follow', 'follow us', 'subscribe', 'subscribe now',
@@ -117,7 +110,6 @@ BOILERPLATE_HEADING_TEXT = {
     'table of contents', 'in this article', 'in this section',
 }
 
-# Text patterns that indicate a soft failure (bot wall, paywall, error page)
 SOFT_FAILURE_PATTERNS = [
     r'access denied',
     r'403 forbidden',
@@ -130,20 +122,16 @@ SOFT_FAILURE_PATTERNS = [
 ]
 SOFT_FAILURE_RE = re.compile('|'.join(SOFT_FAILURE_PATTERNS), re.IGNORECASE)
 
+
 # =====================================================================
 # Robots.txt
 # =====================================================================
 
-# Per-domain cache: {domain: parser-or-None}
-# None means "no robots.txt found / fetch failed" — treat as allow-all.
 _robots_cache: dict[str, object] = {}
 _robots_lock = asyncio.Lock()
 
 
 async def _fetch_robots_text(scheme: str, domain: str, timeout_ms: int) -> str | None:
-    """Fetch /robots.txt using plain HTTP. Returns text or None."""
-    import urllib.request
-    import urllib.error
     url = f"{scheme}://{domain}/robots.txt"
     req = urllib.request.Request(url, headers={'User-Agent': USER_AGENT})
     try:
@@ -152,7 +140,7 @@ async def _fetch_robots_text(scheme: str, domain: str, timeout_ms: int) -> str |
                 return resp.read().decode('utf-8', errors='replace')
     except urllib.error.HTTPError as e:
         if e.code in (404, 410):
-            return None  # no robots.txt -> allow all
+            return None
         return None
     except Exception:
         return None
@@ -160,7 +148,6 @@ async def _fetch_robots_text(scheme: str, domain: str, timeout_ms: int) -> str |
 
 
 async def get_robots(scheme: str, domain: str, timeout_ms: int):
-    """Return a parser (or None) for this domain. Cached."""
     async with _robots_lock:
         if domain in _robots_cache:
             return _robots_cache[domain]
@@ -177,7 +164,6 @@ async def get_robots(scheme: str, domain: str, timeout_ms: int):
 
 
 def robots_can_fetch(parser, url: str, user_agent: str) -> bool:
-    """True if allowed (or no parser)."""
     if parser is None:
         return True
     if HAS_PROTEGO:
@@ -186,20 +172,15 @@ def robots_can_fetch(parser, url: str, user_agent: str) -> bool:
 
 
 def robots_crawl_delay(parser, user_agent: str) -> float | None:
-    """Return Crawl-delay in seconds, or None."""
     if parser is None:
         return None
-    if HAS_PROTEGO:
-        try:
-            d = parser.crawl_delay(user_agent)
-            return float(d) if d is not None else None
-        except Exception:
-            return None
     try:
         d = parser.crawl_delay(user_agent)
         return float(d) if d is not None else None
     except Exception:
         return None
+
+
 # =====================================================================
 # Utility
 # =====================================================================
@@ -213,7 +194,6 @@ def sha16(s: str) -> str:
 
 
 def canonicalize(url: str) -> str:
-    """Strip fragments and tracking params, normalize scheme/host."""
     url, _ = urldefrag(url)
     p = urlparse(url)
     scheme = p.scheme.lower() or 'https'
@@ -221,7 +201,6 @@ def canonicalize(url: str) -> str:
     if host.startswith('www.'):
         host = host[4:]
     path = p.path or '/'
-    # drop trailing slash except for root
     if len(path) > 1 and path.endswith('/'):
         path = path.rstrip('/')
     q = [(k, v) for k, v in parse_qsl(p.query, keep_blank_values=False)
@@ -231,7 +210,6 @@ def canonicalize(url: str) -> str:
 
 
 def slugify(url: str) -> str:
-    """Filesystem-safe, collision-resistant slug for a URL."""
     c = canonicalize(url)
     h = sha16(c)
     s = re.sub(r'[^a-zA-Z0-9]+', '_', c)
@@ -258,7 +236,6 @@ async def fetch_with_playwright(page, url: str, timeout_ms: int):
         final_url = response.url if response else url
         headers = dict(response.headers) if response else {}
 
-        # Give lazy content a moment
         try:
             await page.wait_for_load_state('networkidle', timeout=5000)
         except Exception:
@@ -266,7 +243,6 @@ async def fetch_with_playwright(page, url: str, timeout_ms: int):
 
         await page.wait_for_timeout(800)
 
-        # Trigger lazy-loaded content
         try:
             await page.evaluate("""
                 async () => {
@@ -294,6 +270,7 @@ async def fetch_with_playwright(page, url: str, timeout_ms: int):
     except Exception as e:
         return None, None, url, {}, str(e)
 
+
 async def fetch_plain(url: str, timeout: int):
     req = urllib.request.Request(url, headers={'User-Agent': USER_AGENT})
     try:
@@ -312,11 +289,7 @@ async def fetch_plain(url: str, timeout: int):
 # Fetch outcome classification
 # =====================================================================
 
-def classify_fetch(status: int | None, html: str | None, error: str | None) -> tuple[str, str | None]:
-    """
-    Returns (outcome, reject_reason).
-      outcome: 'ok' | 'reject'
-    """
+def classify_fetch(status, html, error):
     if error and not html:
         if 'timeout' in error.lower():
             return 'reject', 'timeout'
@@ -339,7 +312,6 @@ def classify_fetch(status: int | None, html: str | None, error: str | None) -> t
     if not html or len(html) < 500:
         return 'reject', 'empty_body'
 
-    # Soft failures — bot walls, paywalls, "Access Denied", etc.
     body_start = html[:5000]
     if SOFT_FAILURE_RE.search(body_start):
         return 'reject', 'soft_failure'
@@ -352,7 +324,6 @@ def classify_fetch(status: int | None, html: str | None, error: str | None) -> t
 # =====================================================================
 
 def extract_metadata(soup: BeautifulSoup, url: str) -> dict:
-    """Pull title, author, published, canonical, language, description."""
     meta = {
         'title': None,
         'author': None,
@@ -364,31 +335,26 @@ def extract_metadata(soup: BeautifulSoup, url: str) -> dict:
         'source_type': 'unknown',
     }
 
-    # Language
     html_tag = soup.find('html')
     if html_tag and html_tag.get('lang'):
         meta['language'] = html_tag['lang'].split('-')[0].lower()
 
-    # Canonical
     canonical = soup.find('link', rel='canonical')
     if canonical and canonical.get('href'):
         meta['canonical_url'] = urljoin(url, canonical['href'])
 
-    # Description / og:description
     for name in ('description', 'og:description'):
         tag = soup.find('meta', attrs={'name': name}) or soup.find('meta', property=name)
         if tag and tag.get('content'):
             meta['description'] = clean_text(tag['content'])[:500]
             break
 
-    # Title — prefer og:title, fall back to <title>
     og_title = soup.find('meta', property='og:title')
     if og_title and og_title.get('content'):
         meta['title'] = clean_text(og_title['content'])
     elif soup.title and soup.title.string:
         meta['title'] = clean_text(soup.title.string)
 
-    # Author
     for attrs in [
         {'name': 'author'},
         {'property': 'article:author'},
@@ -399,7 +365,6 @@ def extract_metadata(soup: BeautifulSoup, url: str) -> dict:
             meta['author'] = clean_text(tag['content'])[:200]
             break
 
-    # Published
     for attrs in [
         {'property': 'article:published_time'},
         {'name': 'publication_date'},
@@ -437,40 +402,43 @@ def extract_metadata(soup: BeautifulSoup, url: str) -> dict:
             meta['published_at'] = meta['published_at'] or item.get('datePublished')
             meta['description'] = meta['description'] or item.get('description')
 
-            # source_type from @type
+            if not meta['updated_at']:
+                meta['updated_at'] = item.get('dateModified')
+
             if meta['source_type'] == 'unknown':
                 t = item.get('@type')
                 if isinstance(t, list) and t:
                     t = t[0]
-                if t == 'NewsArticle':       meta['source_type'] = 'article'
-                elif t == 'BlogPosting':     meta['source_type'] = 'article'
-                elif t == 'TechArticle':     meta['source_type'] = 'article'
-                elif t == 'ScholarlyArticle': meta['source_type'] = 'paper'
-                elif t == 'Product':          meta['source_type'] = 'product'
-                elif t == 'QAPage':           meta['source_type'] = 'forum'
-                elif t == 'FAQPage':          meta['source_type'] = 'article'
-                elif t == 'WebPage':          meta['source_type'] = 'article'
+                type_map = {
+                    'NewsArticle':      'article',
+                    'BlogPosting':      'article',
+                    'TechArticle':      'article',
+                    'ScholarlyArticle': 'paper',
+                    'FAQPage':          'article',
+                    'WebPage':          'article',
+                    'Product':          'product',
+                    'QAPage':           'forum',
+                }
+                if t in type_map:
+                    meta['source_type'] = type_map[t]
 
-            # updated_at
-            if not meta['updated_at']:
-                meta['updated_at'] = item.get('dateModified')
-            # Fallback source_type from og:type
-            if meta['source_type'] == 'unknown':
-                og_type = soup.find('meta', property='og:type')
-                if og_type and og_type.get('content'):
-                    t = og_type['content'].strip().lower()
-                    if t in ('article', 'news'):
-                        meta['source_type'] = 'article'
-                    elif t == 'product':
-                        meta['source_type'] = 'product'
-                    elif t == 'website':
-                        meta['source_type'] = 'website'
+    # og:type fallback
+    if meta['source_type'] == 'unknown':
+        og_type = soup.find('meta', property='og:type')
+        if og_type and og_type.get('content'):
+            t = og_type['content'].strip().lower()
+            if t in ('article', 'news'):
+                meta['source_type'] = 'article'
+            elif t == 'product':
+                meta['source_type'] = 'product'
+            elif t == 'website':
+                meta['source_type'] = 'website'
 
     return meta
 
 
 # =====================================================================
-# Content region detection (unchanged logic, slightly cleaner)
+# Content region detection
 # =====================================================================
 
 def class_string(tag: Tag) -> str:
@@ -587,7 +555,6 @@ def get_image_url(img: Tag, base_url: str) -> str | None:
 def extract_code_block(pre: Tag) -> str:
     code = pre.find('code')
     target = code or pre
-    # Drop line-number gutters
     for node in target.find_all(True):
         classes = class_string(node)
         if any(h in classes for h in ('line-number', 'linenumber', 'gutter')):
@@ -600,7 +567,7 @@ def extract_code_block(pre: Tag) -> str:
 
 
 # =====================================================================
-# Block extraction from content region
+# Block extraction
 # =====================================================================
 
 def extract_blocks(root: Tag, base_url: str) -> list[dict]:
@@ -622,7 +589,6 @@ def extract_blocks(root: Tag, base_url: str) -> list[dict]:
             t = clean_text(el.get_text(' ', strip=True))
             if not t:
                 continue
-            # Chrome heading: start skipping until next real heading
             if t.lower().strip() in BOILERPLATE_HEADING_TEXT:
                 skipping = True
                 continue
@@ -725,29 +691,30 @@ def blocks_to_markdown(blocks: list[dict]) -> str:
 # DB recording
 # =====================================================================
 
-def ensure_run(conn, run_id: str, config_id: str | None, urls_count: int) -> None:
+def ensure_run(conn, run_id: str, config_id, urls_count: int) -> None:
     conn.execute("""
-      INSERT OR IGNORE INTO pipeline_runs
+      INSERT INTO pipeline_runs
         (run_id, config_id, started_at, status, stages_json, notes)
-      VALUES (?, ?, ?, 'running', ?, ?)
+      VALUES (%s, %s, %s, 'running', %s, %s)
+      ON CONFLICT (run_id) DO NOTHING
     """, (run_id, config_id, utcnow(),
           json.dumps(['fetch', 'extract']),
           f'crawl of {urls_count} urls'))
 
 
 def ensure_url(conn, url: str) -> str:
-    """Return url_id, inserting into url_queue if new."""
     c = canonicalize(url)
     url_id = sha16(c)
     conn.execute("""
-      INSERT OR IGNORE INTO url_queue
+      INSERT INTO url_queue
         (url_id, url, canonical_url, domain, status, created_at, updated_at)
-      VALUES (?, ?, ?, ?, 'pending', ?, ?)
+      VALUES (%s, %s, %s, %s, 'pending', %s, %s)
+      ON CONFLICT DO NOTHING
     """, (url_id, url, c, domain_of(c), utcnow(), utcnow()))
     return url_id
 
 
-def record_fetch(conn, url_id: str, url: str, status: int | None,
+def record_fetch(conn, url_id: str, url: str, status,
                  html: str, html_path: str, final_url: str,
                  headers: dict | None) -> str:
     fetch_id = sha16(url_id + utcnow() + str(status))
@@ -756,7 +723,7 @@ def record_fetch(conn, url_id: str, url: str, status: int | None,
         (fetch_id, url_id, url, final_url, fetched_at, status_code,
          content_type, content_length, raw_html_path, raw_html_hash,
          response_headers_json)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
     """, (fetch_id, url_id, url, final_url, utcnow(), status,
           headers.get('content-type') if headers else None,
           len(html), html_path, sha16(html),
@@ -765,15 +732,15 @@ def record_fetch(conn, url_id: str, url: str, status: int | None,
 
 
 def record_reject(conn, url_id: str, url: str, reason: str,
-                  status: int | None, detail: str | None) -> None:
+                  status, detail) -> None:
     rid = sha16(url_id + reason + utcnow())
     conn.execute("""
       INSERT INTO rejects
         (reject_id, url_id, url, reason, status_code, detail, fetched_at)
-      VALUES (?, ?, ?, ?, ?, ?, ?)
+      VALUES (%s, %s, %s, %s, %s, %s, %s)
     """, (rid, url_id, url, reason, status, detail, utcnow()))
     conn.execute("""
-      UPDATE url_queue SET status='rejected', updated_at=? WHERE url_id=?
+      UPDATE url_queue SET status='rejected', updated_at=%s WHERE url_id=%s
     """, (utcnow(), url_id))
 
 
@@ -781,10 +748,16 @@ def record_doc_stage(conn, run_id: str, doc_id: str, stage: str,
                      status: str, counts: dict | None = None,
                      error: str | None = None) -> None:
     conn.execute("""
-      INSERT OR REPLACE INTO doc_stages
+      INSERT INTO doc_stages
         (run_id, doc_id, stage, status, started_at, finished_at,
          counts_json, error)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+      VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+      ON CONFLICT (run_id, doc_id, stage) DO UPDATE SET
+        status       = EXCLUDED.status,
+        started_at   = EXCLUDED.started_at,
+        finished_at  = EXCLUDED.finished_at,
+        counts_json  = EXCLUDED.counts_json,
+        error        = EXCLUDED.error
     """, (run_id, doc_id, stage, status, utcnow(), utcnow(),
           json.dumps(counts or {}), error))
 
@@ -798,22 +771,21 @@ async def process_one(
     run_id: str,
     out_dir: Path,
     conn,
-    page,                # playwright page or None
+    page,
     timeout_ms: int,
     max_retries: int,
 ) -> dict:
-    """Fetch, extract, write, record. Returns a status dict."""
     url_id = ensure_url(conn, url)
     slug = slugify(url)
     raw_path = out_dir / f"{slug}.raw.html"
     md_path = out_dir / f"{slug}.md"
     json_path = out_dir / f"{slug}.json"
 
-    # ---- fetch with retries ----
     html = None
     status = None
     error = None
-
+    final_url = url
+    headers: dict = {}
 
     for attempt in range(max_retries + 1):
         if page is not None and HAS_PLAYWRIGHT:
@@ -831,11 +803,9 @@ async def process_one(
             conn.commit()
             return {'url': url, 'status': 'rejected', 'reason': reason}
 
-    # ---- persist raw HTML ----
     raw_path.write_text(html, encoding='utf-8')
     record_fetch(conn, url_id, url, status, html, str(raw_path), final_url, headers)
 
-    # ---- parse & extract ----
     soup = BeautifulSoup(html, 'lxml')
     meta = extract_metadata(soup, url)
     region = find_content_region(soup)
@@ -847,7 +817,6 @@ async def process_one(
         conn.commit()
         return {'url': url, 'status': 'rejected', 'reason': 'no_content_extracted'}
 
-    # ---- write outputs ----
     fm_lines = [f"source_url: {url}"]
     if meta.get('title'):
         fm_lines.append(f"title: {json.dumps(meta['title'])}")
@@ -875,9 +844,8 @@ async def process_one(
         'blocks': blocks,
     }, indent=2, ensure_ascii=False), encoding='utf-8')
 
-    # ---- update url_queue ----
     conn.execute("""
-      UPDATE url_queue SET status='fetched', updated_at=? WHERE url_id=?
+      UPDATE url_queue SET status='fetched', updated_at=%s WHERE url_id=%s
     """, (utcnow(), url_id))
 
     record_doc_stage(conn, run_id, slug, 'fetch', 'ok',
@@ -912,30 +880,21 @@ async def run(args):
     out_dir = Path(args.out)
     out_dir.mkdir(parents=True, exist_ok=True)
 
-    conn = connect(args.db)
+    conn = connect()
     run_id = sha16(f"crawl-{utcnow()}-{len(urls)}")
     ensure_run(conn, run_id, None, len(urls))
     conn.commit()
 
-    # Per-domain rate limiting
-        # Per-domain rate limiting
     last_hit: dict[str, float] = defaultdict(float)
 
-    async def gate(url: str) -> tuple[bool, str | None]:
-        """
-        Returns (allowed, skip_reason).
-        Checks robots.txt, then applies per-domain rate limiting
-        (using the larger of --rate-limit and the site's Crawl-delay).
-        """
+    async def gate(url: str):
         p = urlparse(url)
         domain = domain_of(url)
 
-        # Robots check — cached per domain
         parser = await get_robots(p.scheme or 'https', domain, args.timeout)
         if not robots_can_fetch(parser, url, USER_AGENT):
             return False, 'robots_disallow'
 
-        # Rate limit — honor Crawl-delay if present
         site_delay = robots_crawl_delay(parser, USER_AGENT)
         effective_delay = max(args.rate_limit, site_delay or 0.0)
 
@@ -990,7 +949,7 @@ async def run(args):
     print(f"\ndone: {ok} ok, {rejected} rejected, {len(results)} total")
 
     conn.execute("""
-      UPDATE pipeline_runs SET status='completed', finished_at=? WHERE run_id=?
+      UPDATE pipeline_runs SET status='completed', finished_at=%s WHERE run_id=%s
     """, (utcnow(), run_id))
     conn.commit()
     conn.close()
@@ -1000,8 +959,6 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument('--urls', required=True, help='file with one URL per line')
     ap.add_argument('--out', default='extracted', help='output directory')
-    ap.add_argument('--db', default=None,
-                help='override DB path; otherwise PIPELINE_DB_PATH or corpus_v1.db')
     ap.add_argument('--rate-limit', type=float, default=2.0,
                     help='min seconds between fetches to same domain')
     ap.add_argument('--timeout', type=int, default=60000, help='page timeout ms')

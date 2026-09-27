@@ -812,16 +812,24 @@ def ensure_articles_table(conn):
 def save_article(conn, run_id, topic, markdown, atom_ids, usage):
     article_id = sha16(run_id + '|' + topic)
     conn.execute("""
-      INSERT OR REPLACE INTO articles
+      INSERT INTO articles
         (article_id, topic_id, synthesis_run_id, title, markdown, model,
          created_at, atom_ids_json, notes)
-      VALUES (?, NULL, ?, ?, ?, ?, ?, ?, ?)
+      VALUES (%s, NULL, %s, %s, %s, %s, %s, %s, %s)
+      ON CONFLICT (article_id) DO UPDATE SET
+        topic_id         = EXCLUDED.topic_id,
+        synthesis_run_id = EXCLUDED.synthesis_run_id,
+        title            = EXCLUDED.title,
+        markdown         = EXCLUDED.markdown,
+        model            = EXCLUDED.model,
+        created_at       = EXCLUDED.created_at,
+        atom_ids_json    = EXCLUDED.atom_ids_json,
+        notes            = EXCLUDED.notes
     """, (
         article_id, run_id, topic, markdown, MODEL, utcnow(),
         json.dumps(atom_ids),
         json.dumps({'usage': usage}),
     ))
-
 
 # ----------------------------------------------------------------------
 # Main
@@ -914,8 +922,8 @@ def main():
 
     run_id = sha16(f"synthesize-{utcnow()}")
     conn.execute("""
-    INSERT INTO pipeline_runs (run_id, started_at, status, stages_json)
-    VALUES (?, ?, 'completed', ?)
+      INSERT INTO pipeline_runs (run_id, started_at, status, stages_json)
+      VALUES (%s, %s, 'completed', %s)
     """, (run_id, utcnow(), '["synthesize"]'))
 
     save_article(conn, run_id, topic, markdown, atom_ids, usage)
@@ -928,11 +936,11 @@ def main():
         or getattr(message, 'reasoning', None)
     )
     conn.execute("""
-    INSERT INTO synthesis_traces
+      INSERT INTO synthesis_traces
         (trace_id, article_id, run_id, topic_id, model,
-        system_prompt, user_prompt, raw_content, raw_reasoning,
-        finish_reason, prompt_tokens, completion_tokens, created_at)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+         system_prompt, user_prompt, raw_content, raw_reasoning,
+         finish_reason, prompt_tokens, completion_tokens, created_at)
+      VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
     """, (
         trace_id, article_id, run_id, None, MODEL,
         SYSTEM_PROMPT, user_prompt, content, reasoning,
