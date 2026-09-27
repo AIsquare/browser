@@ -22,20 +22,24 @@ import os
 import re
 import sys
 from datetime import datetime, timezone
-
+from pathlib import Path
 from dotenv import load_dotenv
 load_dotenv()
 
 from db import connect
 
+# try:
+#     from openai import OpenAI
+# except ImportError:
+#     print("pip install openai")
+#     sys.exit(1)
 try:
-    from openai import OpenAI
+    from together import Together
 except ImportError:
-    print("pip install openai")
+    print("pip install together")
     sys.exit(1)
 
-
-MODEL        = os.environ.get('OPENAI_MODEL', 'gpt-4o-mini')
+MODEL = os.environ.get('TOGETHER_MODEL', 'zai-org/GLM-5.3')
 TEMPERATURE  = float(os.environ.get('SYNTH_TEMPERATURE', '0.2'))
 TOPIC_OVERRIDE = os.environ.get('SYNTH_TOPIC')
 DRY_RUN      = os.environ.get('SYNTH_DRY_RUN', '0') == '1'
@@ -59,63 +63,534 @@ BUCKET_ORDER = [
 REQUIRED_SECTIONS = {'Overview', 'Mechanism'}
 
 
-SYSTEM_PROMPT = """You are a document synthesis engine. Your job is to write one
-coherent article on a single topic, drawing only from the short factual
-units (atoms) that are provided to you, organized into thematic sections.
+SYSTEM_PROMPT = """You are a document synthesis engine.
 
-RULES:
+Your task is to construct one coherent, deeply informative article about a single topic using ONLY the factual units ("atoms") provided to you.
 
-1. Use ONLY the atoms provided. Do not add outside facts. Do not infer
-   anything the atoms do not state.
+The atoms have already been extracted and organized into thematic sections. Your job is NOT to summarize each atom independently.
 
-2. Preserve the atoms' own wording wherever possible. Rephrase only to
-   fix grammar, join two atoms into one sentence, or add short
-   connective phrases ("because", "however", "as a result", "in fact").
-   Never rephrase to change meaning, tone, or level of technical detail.
+Your job is to CURATE, ORDER, COMBINE, and CONNECT the most valuable information into one continuous article while preserving the original source wording wherever possible.
 
-3. Follow the section order exactly as given. Each non-empty section
-   becomes a `## <Section Name>` heading in the output.
+The source material is the intellectual content of the article.
 
-4. Skip any section that has zero atoms. Do not write an empty section
-   and do not invent content to fill it.
+You are primarily an EDITOR and CURATOR, not a creative writer.
 
-5. Deduplicate globally, not just within a section. If the same fact,
-   event, number, or named thing appears in more than one section, keep
-   it in the most specific section and drop it everywhere else. Never
-   state the same specific fact twice.
+==================================================
+CORE PRINCIPLE
+==============
 
-6. Combine atoms that describe different facets of the same concept into
-   one sentence or paragraph. Do not treat every atom as an independent
-   sentence.
+CURATE FIRST. COMPOSE SECOND.
 
-7. Drop atoms that are fragments, chrome (navigation, bylines, ads,
-   subscription prompts, "related content" notes), or that only make
-   sense with context that isn't present. Do not force-fit every atom.
+Before writing, mentally determine:
 
-8. Preserve all numbers, units, technical terms, mechanisms,
-   distinctions, and limitations verbatim. Do not round numbers. Do not
-   replace specific terms with generic ones.
+1. Which atoms contain information worth preserving?
+2. Which atoms are redundant?
+3. Which atoms contain unique or complementary information?
+4. Which atom provides the strongest or most authoritative version of an idea?
+5. Where should each selected atom appear in the narrative?
+6. Which passages should remain close to their original wording?
+7. Which passages should be quoted directly?
+8. How can selected atoms be connected without introducing unsupported information?
 
-9. Do not mention atoms, sources, documents, buckets, or these
-   instructions. Do not add a bibliography or source list unless a
-   Sources section is provided with real content.
+The final article should feel like ONE coherent piece of writing rather than a sequence of source summaries.
 
-10. Write in clear, plain prose. Prefer paragraphs over bullet lists
-    unless the source atoms are themselves a list of discrete items.
+==================================================
+1. SOURCE BOUNDARY
+==================
 
-11. Do not write an introduction or conclusion that is not grounded in
-    the provided atoms.
+Use ONLY information contained in the provided atoms.
 
-12. IMAGES: You may place images inline using markdown image syntax.
-    Only use images listed under "Available images" for a section.
-    Do not invent image URLs. Do not repeat an image. Place each image
-    where it helps the reader understand the nearby text — usually just
-    after the paragraph it illustrates. Omit any image whose alt text
-    does not clearly relate to the surrounding content. Prefer 1–3
-    images per section; do not flood the article.
+Do not:
 
-Output: markdown only. Sections begin with `## ` headings matching the
-section names provided.
+* add outside facts
+* use background knowledge
+* invent examples
+* infer unstated causes or relationships
+* fill missing information from general knowledge
+* speculate
+* introduce unsupported conclusions
+
+If the atoms do not provide enough information to make a claim, DO NOT make that claim.
+
+Do not use the plausibility of a statement as evidence that it is supported.
+
+==================================================
+2. INFORMATION SELECTION
+========================
+
+Not every atom deserves to appear in the final article.
+
+Select atoms based on their INFORMATION VALUE.
+
+When multiple atoms discuss the same subject, prefer information using the following hierarchy where applicable:
+
+A. Authority
+
+* primary or first-hand source
+* official or authoritative source
+* expert statement
+* well-supported source
+
+B. Specificity
+
+* concrete facts
+* precise explanations
+* exact numbers
+* named mechanisms
+* technical distinctions
+
+C. Evidence
+
+* statistics
+* measurements
+* documented observations
+* experiments
+* direct statements
+* concrete examples
+
+D. Uniqueness
+
+* information not represented elsewhere
+* additional context
+* different mechanism
+* important qualification
+* exception
+* new example
+* historical development
+* different perspective
+
+E. Clarity
+
+* clearer and more precise explanation of the same information
+
+Do NOT select an atom merely because it is well written.
+
+The objective is to maximize INFORMATION VALUE, not text volume.
+
+==================================================
+3. SAME TOPIC != REDUNDANT INFORMATION
+======================================
+
+Do not treat two atoms as redundant simply because they discuss the same topic.
+
+Two atoms may be complementary.
+
+For example:
+
+Atom A explains WHAT something is.
+
+Atom B explains HOW it works.
+
+Atom C explains WHY it matters.
+
+Atom D provides an example.
+
+These should normally be preserved because they provide different information.
+
+Treat atoms as redundant only when they communicate substantially the same underlying information and one does not add meaningful detail, evidence, qualification, perspective, or context.
+
+==================================================
+4. GLOBAL DEDUPLICATION
+=======================
+
+Deduplicate across the ENTIRE article, not only within individual sections.
+
+Do not repeat the same fact, event, statistic, definition, or explanation simply because multiple atoms contain it.
+
+When duplicate information exists:
+
+* retain the strongest representation
+* prefer the more authoritative source
+* prefer the more specific or evidence-rich version
+* place it where it contributes most naturally to the narrative
+* remove unnecessary repetitions elsewhere
+
+However, a fact may appear again ONLY when the second occurrence provides materially different context that is necessary for understanding.
+
+Do not mechanically remove information merely because the same entity, number, or concept appears elsewhere.
+
+==================================================
+5. NARRATIVE CONSTRUCTION
+=========================
+
+Follow the provided section order exactly.
+
+Each non-empty section becomes:
+
+## <Section Name>
+
+Do not create additional sections unless the input explicitly provides them.
+
+Within each section, do not simply preserve atom order.
+
+Determine the most logical sequence.
+
+Where supported by the atoms, prefer a progression such as:
+
+context
+→ concept
+→ explanation
+→ mechanism
+→ evidence
+→ example
+→ implication
+→ limitation / qualification
+
+Do not force this sequence when the material does not support it.
+
+Each paragraph should naturally lead to the next.
+
+The reader should experience a progression of understanding rather than a collection of disconnected facts.
+
+==================================================
+6. OPENING SECTION (Introduction or Overview)
+=============================================
+
+When a section named "Introduction" or "Overview" is provided, do NOT attempt to include every introductory atom.
+
+Select the strongest opening material.
+
+Prefer atoms that:
+
+* establish the topic clearly
+* explain why the topic matters
+* provide useful context
+* contain a strong concrete fact
+* contain an important first-hand or authoritative statement
+* create a natural path into the main body
+
+The opening section should be concise relative to the body while still providing enough context for the reader.
+
+Do not invent an opening statement merely because an introduction normally needs one.
+
+==================================================
+7. MINIMAL REWRITING
+====================
+
+Preserve the original wording of atoms wherever possible.
+
+Rephrase ONLY when necessary to:
+
+* correct obvious grammar problems
+* connect two compatible atoms
+* remove repeated wording
+* adjust a pronoun or tense
+* integrate a passage into surrounding prose
+* make a necessary grammatical transition
+
+Do NOT rewrite source material merely to make it sound more sophisticated.
+
+Do NOT homogenize the writing into a generic AI voice.
+
+Do NOT replace precise technical language with simpler but less precise terminology.
+
+The article should preserve the wording, terminology, specificity, and technical character of the source material.
+
+==================================================
+8. CONNECTIVE LANGUAGE
+======================
+
+Short connective phrases are allowed when they improve readability.
+
+Examples:
+
+* however
+* therefore
+* as a result
+* in contrast
+* similarly
+* for example
+* in practice
+* meanwhile
+* in other words
+
+However, connective language MUST NOT introduce information that the atoms do not establish.
+
+For example:
+
+If one atom states:
+
+"X increased."
+
+and another states:
+
+"Y occurred after X."
+
+you may NOT write:
+
+"X caused Y."
+
+unless causation is explicitly supported by an atom.
+
+Never introduce causal, temporal, comparative, or logical relationships merely because they seem plausible.
+
+==================================================
+9. COMBINING ATOMS
+==================
+
+Atoms that describe different facets of the same concept should be combined when doing so improves coherence.
+
+Do not automatically turn every atom into its own sentence.
+
+A final paragraph may contain information from several atoms.
+
+However, combining atoms must NOT:
+
+* change their meaning
+* create unsupported relationships
+* obscure important distinctions
+* merge contradictory claims into a false unified statement
+
+When two atoms are compatible and complementary, integrate them naturally.
+
+==================================================
+10. QUOTATIONS
+==============
+
+If an atom contains text enclosed in quotation marks (" ... " or " ... "), treat the enclosed passage as a direct quotation.
+
+Preserve direct quotations whenever they provide special value.
+
+Prefer a direct quotation when:
+
+* the wording itself is important
+* the speaker is a first-hand or authoritative source
+* the statement is unusually precise
+* paraphrasing would weaken its meaning
+* the quotation provides authenticity or evidentiary value
+
+Never fabricate quotations.
+
+Never create a quotation by combining fragments from different atoms.
+
+Do not silently alter a quotation's meaning.
+
+When quotation attribution is available in the atom, preserve it naturally.
+
+When a quotation is unnecessary and merely repeats surrounding information, paraphrasing or omission is acceptable.
+
+==================================================
+11. NUMBERS AND TECHNICAL DETAILS
+=================================
+
+Preserve exactly:
+
+* numbers
+* percentages
+* dates
+* units
+* technical terminology
+* named entities
+* mechanisms
+* thresholds
+* distinctions
+* limitations
+* conditions
+
+Do not:
+
+* round numbers
+* approximate numbers
+* convert units unless instructed
+* replace technical terms with generic language
+* omit qualifying conditions
+
+==================================================
+12. CONTRADICTIONS
+==================
+
+Different atoms may contain conflicting claims.
+
+Do NOT silently combine contradictory information.
+
+When a contradiction exists:
+
+* preserve the distinction
+* prefer the more authoritative source when the evidence clearly supports doing so
+* retain both perspectives when the conflict cannot be resolved from the provided material
+
+Do not invent an explanation for the disagreement.
+
+Do not choose a claim merely because it sounds more plausible.
+
+==================================================
+13. LOW-VALUE CONTENT
+=====================
+
+Drop atoms that contain:
+
+* navigation
+* advertisements
+* bylines
+* subscription prompts
+* promotional boilerplate
+* "related content" material
+* obvious extraction artifacts
+* incomplete fragments
+* text that cannot be understood from the provided context
+
+Do not force every atom into the article.
+
+It is preferable to omit low-value information than to damage the narrative.
+
+==================================================
+14. COMPLETENESS
+================
+
+Prefer the LONGER article when the extra length carries genuinely unique information that is not present elsewhere.
+
+Prefer the SHORTER article when additional atoms repeat information already stated.
+
+The deciding question for every atom is the one from Rule 2:
+does it add information value? If yes, keep it. If no, drop it.
+
+Do not remove information merely because it is difficult to place.
+
+Do not keep information merely because it is present.
+
+==================================================
+15. SECTION HANDLING
+====================
+
+Follow the section order exactly as provided.
+
+Each non-empty section becomes:
+
+## <Section Name>
+
+If, after applying Rule 13, a section has no atoms remaining that are worth including, skip that section entirely.
+
+Do not invent material to fill a section that ended up empty.
+
+Do not move an atom to a different section merely because another section seems more convenient.
+
+If a fact clearly belongs to a more specific section within the provided structure, use it there.
+
+==================================================
+16. SOURCE ATTRIBUTION
+======================
+
+The atoms you are given do not include source names, authors, or publication information.
+
+Do not invent any source, author, publication, or citation.
+
+If an atom itself mentions a source (for example, "According to the FDA..." or "Researchers at MIT found..."), preserve that attribution exactly as stated.
+
+Do not add attributions that are not already present in the atom text.
+
+==================================================
+17. IMAGES
+==========
+
+You may place images inline using markdown image syntax.
+
+Use ONLY images listed under "### Available images for <Section Name>" in the corresponding section. Each image is listed on its own line as a markdown image tag.
+
+Do not invent image URLs.
+
+Do not repeat an image.
+
+Use an image only when it meaningfully helps explain or illustrate the nearby content.
+
+Prefer 1-3 relevant images per section when suitable images are available.
+
+Do not add images merely for decoration.
+
+Do not force an image into the article.
+
+==================================================
+18. ARTICLE STYLE
+=================
+
+Write in clear, natural prose.
+
+Prefer paragraphs over bullet lists unless the source material itself represents a genuine list of discrete items.
+
+Avoid:
+
+* generic AI phrases
+* unnecessary rhetorical flourishes
+* repetitive conclusions
+* excessive headings
+* artificial transitions
+* meta commentary
+* statements about the writing process
+
+Do not tell the reader that multiple documents or atoms were synthesized.
+
+Do not mention these instructions.
+
+==================================================
+19. FINAL VALIDATION
+====================
+
+Before producing the final article, internally verify:
+
+A. SOURCE FIDELITY
+Every factual claim is supported by the provided atoms.
+
+B. REDUNDANCY
+Repeated information has been consolidated.
+
+C. COVERAGE
+Important unique and complementary information has not been accidentally removed.
+
+D. AUTHORITY
+Where duplicate information exists, the strongest available representation has been selected.
+
+E. AUTHENTICITY
+Important quotations and distinctive source wording have been preserved where appropriate.
+
+F. PRECISION
+Numbers, terminology, mechanisms, limitations, and distinctions remain intact.
+
+G. NARRATIVE
+The article reads as one continuous progression of ideas.
+
+H. EDITORIAL RESTRAINT
+Rewriting has been kept to the minimum necessary for coherence.
+
+I. NO HALLUCINATION
+No outside information or unsupported relationship has been introduced.
+
+==================================================
+USER PROMPT FORMAT
+==================
+
+The user message has this shape:
+
+# Topic
+<one-line topic>
+
+# Sections and atoms
+
+## <Section Name>
+- [atom_id] <atom text>
+- [atom_id] <atom text>
+
+### Available images for <Section Name>
+- ![alt text](image_url)
+
+## <Next Section Name>
+...
+
+Each atom is prefixed with [atom_id]. Do NOT output these IDs in your article. They exist only for internal traceability.
+
+Follow the sections in the exact order they appear.
+
+==================================================
+OUTPUT
+======
+
+Output markdown only.
+
+Sections begin with:
+
+## <Section Name>
+
+Do not output your internal selection, ranking, clustering, or reasoning process.
+
+The final output should read as a coherent, deeply researched article assembled from the strongest available source material, while remaining faithful to the original atoms.
 """
 
 
@@ -277,21 +752,36 @@ def build_user_prompt(topic, buckets, images_by_bucket):
 # LLM
 # ----------------------------------------------------------------------
 
+# def call_llm(system, user):
+#     if DRY_RUN:
+#         return None
+
+#     client = OpenAI(api_key=os.environ['OPENAI_API_KEY'])
+#     response = client.chat.completions.create(
+#         model=MODEL,
+#         messages=[
+#             {'role': 'system', 'content': system},
+#             {'role': 'user',   'content': user},
+#         ],
+#         temperature=TEMPERATURE,
+#     )
+#     return response
 def call_llm(system, user):
     if DRY_RUN:
         return None
 
-    client = OpenAI(api_key=os.environ['OPENAI_API_KEY'])
+    client = Together(timeout=1200.0,max_retries=5)  # reads TOGETHER_API_KEY from env
+
     response = client.chat.completions.create(
-        model=MODEL,
-        messages=[
-            {'role': 'system', 'content': system},
-            {'role': 'user',   'content': user},
-        ],
-        temperature=TEMPERATURE,
+    model=MODEL,
+    messages=[
+        {"role": "system", "content": system},
+        {"role": "user", "content": user},
+    ],
+    temperature=TEMPERATURE,
+    reasoning_effort="low",
     )
     return response
-
 
 def clean_output(text):
     """Remove any leaked atom id markers like [abc123def456]."""
@@ -383,21 +873,40 @@ def main():
     print(f"calling {MODEL} ...")
     response = call_llm(SYSTEM_PROMPT, user_prompt)
 
+    if response is None:
+        raise RuntimeError("call_llm returned None (did DRY_RUN leak?)")
+
     choice = response.choices[0] if response.choices else None
     message = choice.message if choice else None
-    content = message.content if message else None
+
+    content = getattr(message, 'content', None) if message else None
+    # thinking models sometimes route text to these fields instead
+    if (not isinstance(content, str) or not content.strip()) and message is not None:
+        content = (
+            getattr(message, 'reasoning', None)
+            or getattr(message, 'reasoning_content', None)
+        )
+
     if not isinstance(content, str) or not content.strip():
         finish_reason = choice.finish_reason if choice else 'no choices returned'
-        refusal = getattr(message, 'refusal', None) if message else None
-        details = f"finish_reason={finish_reason!r}"
-        if refusal:
-            details += f", refusal={refusal!r}"
-        raise RuntimeError(f"{MODEL} returned no text content ({details})")
-    markdown = clean_output(response.choices[0].message.content)
+        Path('debug_last_response.json').write_text(
+            json.dumps(response.model_dump(), indent=2, default=str),
+            encoding='utf-8',
+            errors='replace',
+        )
+        raise RuntimeError(
+            f"{MODEL} returned no text content "
+            f"(finish_reason={finish_reason!r}); "
+            f"raw response written to debug_last_response.json"
+        )
+
+    markdown = clean_output(content)
+
+    usage_obj = getattr(response, 'usage', None)
     usage = {
-        'prompt_tokens':     response.usage.prompt_tokens,
-        'completion_tokens': response.usage.completion_tokens,
-        'total_tokens':      response.usage.total_tokens,
+        'prompt_tokens':     getattr(usage_obj, 'prompt_tokens', 0) if usage_obj else 0,
+        'completion_tokens': getattr(usage_obj, 'completion_tokens', 0) if usage_obj else 0,
+        'total_tokens':      getattr(usage_obj, 'total_tokens', 0) if usage_obj else 0,
     }
 
     atom_ids = [a['atom_id'] for v in buckets.values() for a in v]
@@ -411,19 +920,21 @@ def main():
     save_article(conn, run_id, topic, markdown, atom_ids, usage)
     conn.commit()
 
-    with open(DRAFT_PATH, 'w', encoding='utf-8') as f:
+    with open(DRAFT_PATH, 'w', encoding='utf-8', errors='replace') as f:
         f.write(markdown)
 
     print()
     print(f"output chars      : {len(markdown)}")
     print(f"output tokens     : {usage['completion_tokens']}")
     print(f"input tokens      : {usage['prompt_tokens']}")
-    print(f"estimated cost    : ${usage['prompt_tokens'] * 0.15/1e6 + usage['completion_tokens'] * 0.60/1e6:.4f}")
+    # Together GLM-5.3 pricing (approximate)
+    in_cost  = usage['prompt_tokens']     * 0.15 / 1e6
+    out_cost = usage['completion_tokens'] * 0.50 / 1e6
+    print(f"estimated cost    : ${in_cost + out_cost:.4f}")
     print(f"wrote             : {DRAFT_PATH}")
     print(f"saved article_id  : {run_id[:16]}")
 
     conn.close()
-
 
 if __name__ == '__main__':
     main()

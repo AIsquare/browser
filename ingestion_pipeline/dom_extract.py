@@ -960,7 +960,8 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument('--urls', required=True, help='file with one URL per line')
     ap.add_argument('--out', default='extracted', help='output directory')
-    ap.add_argument('--db', default='corpus_v1.db')
+    ap.add_argument('--db', default=None,
+                help='override DB path; otherwise PIPELINE_DB_PATH or corpus_v1.db')
     ap.add_argument('--rate-limit', type=float, default=2.0,
                     help='min seconds between fetches to same domain')
     ap.add_argument('--timeout', type=int, default=60000, help='page timeout ms')

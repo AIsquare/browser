@@ -1,22 +1,24 @@
 """
-Shared DB connection helper. Every script uses this.
+Shared DB connection helper.
 
-  from db import connect
+Resolution order for the DB path:
+  1. explicit path argument passed to connect()
+  2. PIPELINE_DB_PATH environment variable
+  3. corpus_v1.db in the current working directory
 
-  with connect() as conn:
-      conn.execute(...)
-
-Why: SQLite's PRAGMA foreign_keys and journal_mode are per-connection,
-not stored in the schema file. Setting them here means every script
-gets the same behavior without repeating the PRAGMAs.
+The pipeline orchestrator sets PIPELINE_DB_PATH per job so each job gets
+its own isolated DB. Standalone scripts leave it unset and use corpus_v1.db.
 """
+import os
 import sqlite3
 
-DB_PATH = 'corpus_v1.db'
+DEFAULT_DB = 'corpus_v1.db'
 
 
 def connect(path: str | None = None) -> sqlite3.Connection:
-    conn = sqlite3.connect(path or DB_PATH)
+    if path is None:
+        path = os.environ.get('PIPELINE_DB_PATH') or DEFAULT_DB
+    conn = sqlite3.connect(path)
     conn.execute("PRAGMA foreign_keys = ON")
     conn.execute("PRAGMA journal_mode = WAL")
     conn.execute("PRAGMA synchronous = NORMAL")
