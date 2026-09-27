@@ -133,6 +133,19 @@ def count_tokens(text: str) -> int:
     return max(1, len(text) // 4)
 
 
+def _scrub(value):
+    if isinstance(value, str):
+        return ''.join(
+            '\ufffd' if 0xD800 <= ord(char) <= 0xDFFF else char
+            for char in value
+        )
+    if isinstance(value, dict):
+        return {_scrub(key): _scrub(item) for key, item in value.items()}
+    if isinstance(value, list):
+        return [_scrub(item) for item in value]
+    return value
+
+
 def _node_text(node: SyntaxTreeNode) -> str:
     parts = []
     for child in node.walk():
@@ -428,10 +441,11 @@ def main():
 
     for md_path in md_files:
         result = ingest_file(md_path)
+        result = _scrub(result)
         out_path = OUTPUT_DIR / f"{result['doc_id']}.json"
         out_path.write_text(
             json.dumps(result, indent=2, ensure_ascii=False),
-            encoding='utf-8'
+            encoding='utf-8',
         )
         print(f"{result['doc_id'][:60]:60s}  "
               f"{result['total_blocks']:4d} blocks  "

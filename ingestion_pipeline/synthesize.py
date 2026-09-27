@@ -383,6 +383,16 @@ def main():
     print(f"calling {MODEL} ...")
     response = call_llm(SYSTEM_PROMPT, user_prompt)
 
+    choice = response.choices[0] if response.choices else None
+    message = choice.message if choice else None
+    content = message.content if message else None
+    if not isinstance(content, str) or not content.strip():
+        finish_reason = choice.finish_reason if choice else 'no choices returned'
+        refusal = getattr(message, 'refusal', None) if message else None
+        details = f"finish_reason={finish_reason!r}"
+        if refusal:
+            details += f", refusal={refusal!r}"
+        raise RuntimeError(f"{MODEL} returned no text content ({details})")
     markdown = clean_output(response.choices[0].message.content)
     usage = {
         'prompt_tokens':     response.usage.prompt_tokens,
