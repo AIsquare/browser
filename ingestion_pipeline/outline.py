@@ -25,8 +25,10 @@ from datetime import datetime, timezone
 from dotenv import load_dotenv
 load_dotenv()
 
-from db import connect
+from dotenv import load_dotenv
+load_dotenv()
 
+from db import connect
 try:
     from typesafe_sdk import Choice, Noul, TypeSafeClient
 except ImportError:

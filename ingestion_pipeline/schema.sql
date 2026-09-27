@@ -10,7 +10,6 @@
 --   * Foreign keys ON — requires PRAGMA foreign_keys = ON at connect time
 -- =====================================================================
 
-PRAGMA foreign_keys = ON;
 
 -- =====================================================================
 -- SECTION 1 — Config and runs (observability spine)
@@ -279,7 +278,7 @@ CREATE TABLE IF NOT EXISTS boilerplate_patterns (
   pattern        TEXT NOT NULL,
   hit_count      INTEGER DEFAULT 0,
   doc_count      INTEGER DEFAULT 0,
-  confidence     REAL,
+  confidence     DOUBLE PRECISION,
   created_at     TEXT NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_boilerplate_domain ON boilerplate_patterns(domain);
@@ -290,7 +289,7 @@ CREATE TABLE IF NOT EXISTS embeddings (
   target_id    TEXT NOT NULL,
   model        TEXT NOT NULL,
   dim          INTEGER NOT NULL,
-  vector       BLOB NOT NULL,
+  vector       BYTEA NOT NULL,
   created_at   TEXT NOT NULL,
   PRIMARY KEY (target_type, target_id, model)
 );
@@ -311,7 +310,7 @@ CREATE TABLE IF NOT EXISTS topics (
 CREATE TABLE IF NOT EXISTS doc_topics (
   doc_id     TEXT NOT NULL REFERENCES documents(doc_id),
   topic_id   TEXT NOT NULL REFERENCES topics(topic_id),
-  confidence REAL,
+  confidence DOUBLE PRECISION,
   PRIMARY KEY (doc_id, topic_id)
 );
 CREATE INDEX IF NOT EXISTS idx_doc_topics_topic ON doc_topics(topic_id);
@@ -321,7 +320,7 @@ CREATE TABLE IF NOT EXISTS atom_buckets (
   topic_id    TEXT REFERENCES topics(topic_id),   -- null for single-topic corpus
   bucket      TEXT NOT NULL,             -- narrative bucket name
   method      TEXT,                      -- heading|text|prototype|default
-  confidence  REAL
+  confidence  DOUBLE PRECISION
 );
 CREATE INDEX IF NOT EXISTS idx_buckets_bucket ON atom_buckets(bucket);
 CREATE INDEX IF NOT EXISTS idx_buckets_topic ON atom_buckets(topic_id);
@@ -331,7 +330,7 @@ CREATE TABLE IF NOT EXISTS selected_atoms (
   topic_id        TEXT REFERENCES topics(topic_id),
   bucket          TEXT NOT NULL,
   rank            INTEGER,
-  score           REAL,
+  score           DOUBLE PRECISION,
   doc_id          TEXT,
   reason          TEXT,                  -- formula|singleton|llm_rerank|manual
   rerank_reason   TEXT,                  -- LLM explanation if rerank was used

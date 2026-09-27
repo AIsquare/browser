@@ -25,7 +25,10 @@ Env / flags:
   --no-js              disable Playwright, use plain HTTP
 """
 from __future__ import annotations
-from db import connect
+
+from dotenv import load_dotenv
+load_dotenv()
+
 import argparse
 import asyncio
 import hashlib
@@ -43,6 +46,7 @@ from urllib.parse import urljoin, urlparse, urldefrag, urlunparse, parse_qsl, ur
 
 from bs4 import BeautifulSoup, Tag
 
+from db import connect
 # Robots.txt parsers — prefer protego (modern, handles wildcards + crawl-delay)
 try:
     from protego import Protego

@@ -1,5 +1,5 @@
 """
-Load block ASTs into corpus_v1.db.
+Load block ASTs into Neon Postgres.
 
 Reads every data/blocks/*.json, derives sections, splits atoms, and
 writes to documents, sections, blocks, atoms, images, links.
@@ -13,9 +13,11 @@ from __future__ import annotations
 
 import json
 import re
-import sqlite3
 from datetime import datetime, timezone
 from pathlib import Path
+
+from dotenv import load_dotenv
+load_dotenv()
 
 from db import connect
 
@@ -36,12 +38,10 @@ ABBREV = {
 def split_sentences(text: str) -> list[str]:
     if not text or not text.strip():
         return []
-    # Protect known abbreviations
     protected = text
     for a in ABBREV:
         protected = protected.replace(a, a.replace('.', '\x00'))
-    # Split on sentence terminators followed by whitespace + capital/digit/quote
-    parts = re.split(r'(?<=[.!?])\s+(?=[A-Z0-9"\'(])', protected)
+    parts = re.split(r'(?<=[.!?])\s+(?=[A-Z0-9"\'\(])', protected)
     parts = [p.replace('\x00', '.').strip() for p in parts]
     return [p for p in parts if p]
 
@@ -62,19 +62,13 @@ def utcnow() -> str:
 
 
 # ----------------------------------------------------------------------
-# Section derivation (stack walk)
+# Section derivation (stack walk) — unchanged logic
 # ----------------------------------------------------------------------
 
 def derive_sections(blocks: list[dict], doc_id: str) -> list[dict]:
-    """
-    Walk blocks in order. Maintain a stack of (level, block_id, heading).
-    Each heading opens a section; non-heading blocks inherit the top
-    of stack as section_id.
-    """
     sections = []
-    stack: list[tuple[int, str, str]] = []  # (level, block_id, heading)
+    stack: list[tuple[int, str, str]] = []
 
-    # Root section for content before any heading
     root_id = f"{doc_id}__root"
     sections.append({
         'section_id': root_id,
@@ -98,7 +92,6 @@ def derive_sections(blocks: list[dict], doc_id: str) -> list[dict]:
     for b in blocks:
         if b['block_type'] == 'heading':
             if b.get('is_orphan'):
-                # do not open a section, attach to current
                 cur_id = stack[-1][1] if stack else root_id
                 b['section_id'] = cur_id
                 s = stats.setdefault(cur_id, {'first': None, 'last': None, 'tok': 0, 'cs': None, 'ce': None})
@@ -142,7 +135,6 @@ def derive_sections(blocks: list[dict], doc_id: str) -> list[dict]:
             s['last'] = b['block_id']; s['ce'] = b['char_end']
             s['tok'] += b.get('token_count') or 0
 
-    # fill stats into sections
     for sec in sections:
         sid = sec['section_id']
         s = stats.get(sid, {})
@@ -158,19 +150,10 @@ def derive_sections(blocks: list[dict], doc_id: str) -> list[dict]:
 
 
 # ----------------------------------------------------------------------
-# Atomization
+# Atomization — unchanged
 # ----------------------------------------------------------------------
 
 def atomize_block(b: dict) -> list[dict]:
-    """
-    Given a block dict, produce a list of atom dicts.
-    Rules:
-      - heading: skipped (becomes section boundary)
-      - paragraph / blockquote: sentence-split
-      - list_item: one atom
-      - image: one atom (caption)
-      - code / table / math: one atom (whole block)
-    """
     bt = b['block_type']
     text = b.get('text') or ''
 
@@ -181,7 +164,6 @@ def atomize_block(b: dict) -> list[dict]:
 
     if bt == 'paragraph' or bt == 'blockquote':
         if b.get('is_math'):
-            # whole block, single atom
             if text.strip():
                 atoms.append(('math', text.strip()))
         else:
@@ -207,7 +189,6 @@ def atomize_block(b: dict) -> list[dict]:
             atoms.append(('table', text.strip()))
 
     else:
-        # unknown type — treat as prose
         for s in split_sentences(text):
             atoms.append(('sentence', s))
 
@@ -219,7 +200,6 @@ def atomize_block(b: dict) -> list[dict]:
 # ----------------------------------------------------------------------
 
 def _extract_source_url(blocks: list[dict], frontmatter: dict | None = None) -> str | None:
-    """Find the source URL from '# Source' block, or frontmatter."""
     for i, b in enumerate(blocks):
         if b['block_type'] == 'heading' and b.get('text', '').strip().lower() == 'source':
             for j in range(i + 1, min(i + 3, len(blocks))):
@@ -231,7 +211,7 @@ def _extract_source_url(blocks: list[dict], frontmatter: dict | None = None) -> 
     return None
 
 
-def load_doc(conn: sqlite3.Connection, ast: dict, run_id: str | None = None) -> dict:
+def load_doc(conn, ast: dict, run_id: str | None = None) -> dict:
     doc_id = ast['doc_id']
     blocks = ast['blocks']
     frontmatter = ast.get('frontmatter') or {}
@@ -258,19 +238,19 @@ def load_doc(conn: sqlite3.Connection, ast: dict, run_id: str | None = None) -> 
         (doc_id, source_url, canonical_url, title, author, published_at,
          updated_at, language, description, source_type, content_hash,
          frontmatter_json, first_ingested_at, last_ingested_at)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
       ON CONFLICT(doc_id) DO UPDATE SET
-        source_url       = excluded.source_url,
-        title            = excluded.title,
-        author           = excluded.author,
-        published_at     = excluded.published_at,
-        updated_at       = excluded.updated_at,
-        language         = excluded.language,
-        description      = excluded.description,
-        source_type      = excluded.source_type,
-        content_hash     = excluded.content_hash,
-        frontmatter_json = excluded.frontmatter_json,
-        last_ingested_at = excluded.last_ingested_at
+        source_url       = EXCLUDED.source_url,
+        title            = EXCLUDED.title,
+        author           = EXCLUDED.author,
+        published_at     = EXCLUDED.published_at,
+        updated_at       = EXCLUDED.updated_at,
+        language         = EXCLUDED.language,
+        description      = EXCLUDED.description,
+        source_type      = EXCLUDED.source_type,
+        content_hash     = EXCLUDED.content_hash,
+        frontmatter_json = EXCLUDED.frontmatter_json,
+        last_ingested_at = EXCLUDED.last_ingested_at
     """, (
         doc_id, source_url, source_url, title,
         frontmatter.get('author'),
@@ -284,37 +264,29 @@ def load_doc(conn: sqlite3.Connection, ast: dict, run_id: str | None = None) -> 
         now, now,
     ))
 
-    # -- clear previous rows for this doc (idempotent re-ingest) --
-        # -- clear previous rows for this doc (idempotent re-ingest) --
-    # Delete in child-first order. Defer FK checks so intra-table
-    # ordering (e.g. self-referencing sections) doesn't matter.
-    conn.execute("PRAGMA defer_foreign_keys = ON")
-
-    # Deepest children first
+    # -- clear previous rows (idempotent re-ingest) --
     conn.execute("""
       DELETE FROM section_images
-      WHERE section_id IN (SELECT section_id FROM sections WHERE doc_id=?)
+      WHERE section_id IN (SELECT section_id FROM sections WHERE doc_id=%s)
     """, (doc_id,))
     conn.execute("""
       DELETE FROM footnote_refs
-      WHERE block_id IN (SELECT block_id FROM blocks WHERE doc_id=?)
+      WHERE block_id IN (SELECT block_id FROM blocks WHERE doc_id=%s)
     """, (doc_id,))
-    conn.execute("DELETE FROM footnotes WHERE doc_id=?", (doc_id,))
+    conn.execute("DELETE FROM footnotes WHERE doc_id=%s", (doc_id,))
 
-    # Enrichment tables that reference atoms
-    conn.execute("DELETE FROM selected_atoms WHERE doc_id=?", (doc_id,))
+    conn.execute("DELETE FROM selected_atoms WHERE doc_id=%s", (doc_id,))
     conn.execute("""
       DELETE FROM atom_buckets
-      WHERE atom_id IN (SELECT atom_id FROM atoms WHERE doc_id=?)
+      WHERE atom_id IN (SELECT atom_id FROM atoms WHERE doc_id=%s)
     """, (doc_id,))
-    conn.execute("DELETE FROM cluster_members WHERE doc_id=?", (doc_id,))
+    conn.execute("DELETE FROM cluster_members WHERE doc_id=%s", (doc_id,))
 
-    # Core chain, deepest first
-    conn.execute("DELETE FROM atoms WHERE doc_id=?", (doc_id,))
-    conn.execute("DELETE FROM links WHERE doc_id=?", (doc_id,))
-    conn.execute("DELETE FROM images WHERE doc_id=?", (doc_id,))
-    conn.execute("DELETE FROM blocks WHERE doc_id=?", (doc_id,))
-    conn.execute("DELETE FROM sections WHERE doc_id=?", (doc_id,))
+    conn.execute("DELETE FROM atoms WHERE doc_id=%s", (doc_id,))
+    conn.execute("DELETE FROM links WHERE doc_id=%s", (doc_id,))
+    conn.execute("DELETE FROM images WHERE doc_id=%s", (doc_id,))
+    conn.execute("DELETE FROM blocks WHERE doc_id=%s", (doc_id,))
+    conn.execute("DELETE FROM sections WHERE doc_id=%s", (doc_id,))
 
     # -- sections --
     sections = derive_sections(blocks, doc_id)
@@ -324,7 +296,7 @@ def load_doc(conn: sqlite3.Connection, ast: dict, run_id: str | None = None) -> 
             (section_id, doc_id, parent_section_id, heading, heading_level,
              heading_path, first_block_id, last_block_id, token_count,
              char_start, char_end, is_boilerplate)
-          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+          VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
         """, (
             s['section_id'], s['doc_id'], s['parent_section_id'],
             s['heading'], s['heading_level'], s['heading_path'],
@@ -340,7 +312,7 @@ def load_doc(conn: sqlite3.Connection, ast: dict, run_id: str | None = None) -> 
              list_id, block_type, heading_path, order_index, char_start, char_end,
              char_count, token_count, text, raw_text, content_hash,
              is_orphan, is_boilerplate, is_math, is_footnote, language, extra_json)
-          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+          VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
         """, (
             b['block_id'], doc_id, b.get('section_id'),
             b.get('parent_block_id'), b.get('prev_block_id'), b.get('next_block_id'),
@@ -369,10 +341,21 @@ def load_doc(conn: sqlite3.Connection, ast: dict, run_id: str | None = None) -> 
                 continue
             atom_id = sha16(f"{b['block_id']}|{i}|{text}")
             conn.execute("""
-              INSERT OR REPLACE INTO atoms
+              INSERT INTO atoms
                 (atom_id, block_id, doc_id, section_id, atom_type,
                  order_index, char_start, char_end, token_count, text, content_hash)
-              VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+              VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+              ON CONFLICT (atom_id) DO UPDATE SET
+                block_id     = EXCLUDED.block_id,
+                doc_id       = EXCLUDED.doc_id,
+                section_id   = EXCLUDED.section_id,
+                atom_type    = EXCLUDED.atom_type,
+                order_index  = EXCLUDED.order_index,
+                char_start   = EXCLUDED.char_start,
+                char_end     = EXCLUDED.char_end,
+                token_count  = EXCLUDED.token_count,
+                text         = EXCLUDED.text,
+                content_hash = EXCLUDED.content_hash
             """, (
                 atom_id, b['block_id'], doc_id, b.get('section_id'),
                 atype, i,
@@ -389,9 +372,10 @@ def load_doc(conn: sqlite3.Connection, ast: dict, run_id: str | None = None) -> 
                 continue
             image_id = sha16(url)
             conn.execute("""
-              INSERT OR IGNORE INTO images
+              INSERT INTO images
                 (image_id, block_id, doc_id, section_id, url, alt, created_at)
-              VALUES (?, ?, ?, ?, ?, ?, ?)
+              VALUES (%s, %s, %s, %s, %s, %s, %s)
+              ON CONFLICT (image_id) DO NOTHING
             """, (
                 image_id, b['block_id'], doc_id, b.get('section_id'),
                 url, img.get('alt', ''), now,
@@ -405,9 +389,17 @@ def load_doc(conn: sqlite3.Connection, ast: dict, run_id: str | None = None) -> 
                 continue
             link_id = sha16(f"{b['block_id']}|{i}|{url}")
             conn.execute("""
-              INSERT OR REPLACE INTO links
+              INSERT INTO links
                 (link_id, block_id, doc_id, url, text, is_internal, is_citation, order_index)
-              VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+              VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+              ON CONFLICT (link_id) DO UPDATE SET
+                block_id    = EXCLUDED.block_id,
+                doc_id      = EXCLUDED.doc_id,
+                url         = EXCLUDED.url,
+                text        = EXCLUDED.text,
+                is_internal = EXCLUDED.is_internal,
+                is_citation = EXCLUDED.is_citation,
+                order_index = EXCLUDED.order_index
             """, (
                 link_id, b['block_id'], doc_id, url,
                 lnk.get('text', ''),
@@ -418,9 +410,15 @@ def load_doc(conn: sqlite3.Connection, ast: dict, run_id: str | None = None) -> 
     # -- doc_stages --
     if run_id:
         conn.execute("""
-          INSERT OR REPLACE INTO doc_stages
+          INSERT INTO doc_stages
             (run_id, doc_id, stage, status, started_at, finished_at, counts_json, error)
-          VALUES (?, ?, 'load', 'ok', ?, ?, ?, NULL)
+          VALUES (%s, %s, 'load', 'ok', %s, %s, %s, NULL)
+          ON CONFLICT (run_id, doc_id, stage) DO UPDATE SET
+            status       = EXCLUDED.status,
+            started_at   = EXCLUDED.started_at,
+            finished_at  = EXCLUDED.finished_at,
+            counts_json  = EXCLUDED.counts_json,
+            error        = EXCLUDED.error
         """, (run_id, doc_id, now, now,
               json.dumps({'blocks': len(blocks), 'atoms': atom_count,
                           'sections': len(sections)})))
@@ -447,7 +445,7 @@ def main():
     run_id = sha16(f"ingest-{utcnow()}")
     conn.execute("""
       INSERT INTO pipeline_runs (run_id, started_at, status, stages_json)
-      VALUES (?, ?, 'running', ?)
+      VALUES (%s, %s, 'running', %s)
     """, (run_id, utcnow(), json.dumps(['load'])))
 
     total = {'docs': 0, 'blocks': 0, 'atoms': 0, 'sections': 0}
@@ -469,7 +467,7 @@ def main():
               f"{r['sections']:3d} sections")
 
     conn.execute("""
-      UPDATE pipeline_runs SET status='completed', finished_at=? WHERE run_id=?
+      UPDATE pipeline_runs SET status='completed', finished_at=%s WHERE run_id=%s
     """, (utcnow(), run_id))
     conn.commit()
     conn.close()

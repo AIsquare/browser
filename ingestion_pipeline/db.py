@@ -1,26 +1,34 @@
 """
 Shared DB connection helper.
 
-Resolution order for the DB path:
-  1. explicit path argument passed to connect()
-  2. PIPELINE_DB_PATH environment variable
-  3. corpus_v1.db in the current working directory
+Resolution order for the DB URL:
+  1. explicit url argument passed to connect()
+  2. DATABASE_URL environment variable
 
-The pipeline orchestrator sets PIPELINE_DB_PATH per job so each job gets
-its own isolated DB. Standalone scripts leave it unset and use corpus_v1.db.
+Neon pooled connection strings work with psycopg3 out of the box.
+If you see "prepared statement does not exist" errors, uncomment
+prepare_threshold=None below.
 """
+from __future__ import annotations
+
 import os
-import sqlite3
+import psycopg
+from psycopg.rows import dict_row
 
-DEFAULT_DB = 'corpus_v1.db'
 
 
-def connect(path: str | None = None) -> sqlite3.Connection:
-    if path is None:
-        path = os.environ.get('PIPELINE_DB_PATH') or DEFAULT_DB
-    conn = sqlite3.connect(path)
-    conn.execute("PRAGMA foreign_keys = ON")
-    conn.execute("PRAGMA journal_mode = WAL")
-    conn.execute("PRAGMA synchronous = NORMAL")
-    conn.row_factory = sqlite3.Row
+def connect(url: str | None = None) -> psycopg.Connection:
+    url = url or os.environ.get('DATABASE_URL')
+    if not url:
+        raise RuntimeError(
+            "DATABASE_URL not set. Copy the pooled connection string "
+            "from the Neon console into .env."
+        )
+
+    conn = psycopg.connect(
+        url,
+        row_factory=dict_row,
+        autocommit=False,
+        # prepare_threshold=None,  # uncomment if Neon pooler rejects prepares
+    )
     return conn
