@@ -363,6 +363,23 @@ CREATE TABLE IF NOT EXISTS articles (
 CREATE INDEX IF NOT EXISTS idx_articles_topic ON articles(topic_id);
 CREATE INDEX IF NOT EXISTS idx_articles_run ON articles(synthesis_run_id);
 
+CREATE TABLE IF NOT EXISTS synthesis_traces (
+  trace_id          TEXT PRIMARY KEY,
+  article_id        TEXT REFERENCES articles(article_id),
+  run_id            TEXT,
+  topic_id          TEXT,
+  model             TEXT NOT NULL,
+  system_prompt     TEXT NOT NULL,
+  user_prompt       TEXT NOT NULL,
+  raw_content       TEXT,
+  raw_reasoning     TEXT,
+  finish_reason     TEXT,
+  prompt_tokens     INTEGER,
+  completion_tokens INTEGER,
+  created_at        TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_traces_article ON synthesis_traces(article_id);
+CREATE INDEX IF NOT EXISTS idx_traces_created ON synthesis_traces(created_at DESC);
 -- =====================================================================
 -- END
 -- =====================================================================

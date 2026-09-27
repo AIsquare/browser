@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import uuid
 import os
 import re
 import sys
@@ -913,11 +914,33 @@ def main():
 
     run_id = sha16(f"synthesize-{utcnow()}")
     conn.execute("""
-      INSERT INTO pipeline_runs (run_id, started_at, status, stages_json)
-      VALUES (?, ?, 'completed', ?)
+    INSERT INTO pipeline_runs (run_id, started_at, status, stages_json)
+    VALUES (?, ?, 'completed', ?)
     """, (run_id, utcnow(), '["synthesize"]'))
 
     save_article(conn, run_id, topic, markdown, atom_ids, usage)
+
+    # -- synthesis trace --
+    trace_id = uuid.uuid4().hex[:16]
+    article_id = sha16(run_id + '|' + topic)
+    reasoning = (
+        getattr(message, 'reasoning_content', None)
+        or getattr(message, 'reasoning', None)
+    )
+    conn.execute("""
+    INSERT INTO synthesis_traces
+        (trace_id, article_id, run_id, topic_id, model,
+        system_prompt, user_prompt, raw_content, raw_reasoning,
+        finish_reason, prompt_tokens, completion_tokens, created_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    """, (
+        trace_id, article_id, run_id, None, MODEL,
+        SYSTEM_PROMPT, user_prompt, content, reasoning,
+        getattr(choice, 'finish_reason', None),
+        usage['prompt_tokens'], usage['completion_tokens'],
+        utcnow(),
+    ))
+
     conn.commit()
 
     with open(DRAFT_PATH, 'w', encoding='utf-8', errors='replace') as f:

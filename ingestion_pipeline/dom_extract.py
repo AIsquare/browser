@@ -37,6 +37,8 @@ import time
 from collections import defaultdict
 from datetime import datetime, timezone
 from pathlib import Path
+import urllib.error
+import urllib.request
 from urllib.parse import urljoin, urlparse, urldefrag, urlunparse, parse_qsl, urlencode
 
 from bs4 import BeautifulSoup, Tag
@@ -244,11 +246,13 @@ def clean_text(text: str) -> str:
 # Fetch — Playwright or plain HTTP, with retries
 # =====================================================================
 
-async def fetch_with_playwright(page, url: str, timeout_ms: int) -> tuple[str | None, int | None, str | None]:
-    """Returns (html, status_code, error)."""
+async def fetch_with_playwright(page, url: str, timeout_ms: int):
+    """Returns (html, status_code, final_url, headers, error)."""
     try:
         response = await page.goto(url, wait_until='domcontentloaded', timeout=timeout_ms)
         status = response.status if response else None
+        final_url = response.url if response else url
+        headers = dict(response.headers) if response else {}
 
         # Give lazy content a moment
         try:
@@ -282,24 +286,22 @@ async def fetch_with_playwright(page, url: str, timeout_ms: int) -> tuple[str | 
             pass
 
         html = await page.content()
-        return html, status, None
+        return html, status, final_url, headers, None
     except Exception as e:
-        return None, None, str(e)
+        return None, None, url, {}, str(e)
 
-
-async def fetch_plain(url: str, timeout: int) -> tuple[str | None, int | None, str | None]:
-    """Plain HTTP fallback without JS rendering."""
-    import urllib.request
-    import urllib.error
+async def fetch_plain(url: str, timeout: int):
     req = urllib.request.Request(url, headers={'User-Agent': USER_AGENT})
     try:
         with urllib.request.urlopen(req, timeout=timeout / 1000) as resp:
             html = resp.read().decode('utf-8', errors='replace')
-            return html, resp.status, None
+            final_url = resp.url
+            headers = dict(resp.headers)
+            return html, resp.status, final_url, headers, None
     except urllib.error.HTTPError as e:
-        return None, e.code, f"http_{e.code}"
+        return None, e.code, url, {}, f"http_{e.code}"
     except Exception as e:
-        return None, None, str(e)
+        return None, None, url, {}, str(e)
 
 
 # =====================================================================
@@ -351,9 +353,11 @@ def extract_metadata(soup: BeautifulSoup, url: str) -> dict:
         'title': None,
         'author': None,
         'published_at': None,
+        'updated_at': None,
         'canonical_url': None,
         'language': None,
         'description': None,
+        'source_type': 'unknown',
     }
 
     # Language
@@ -428,6 +432,35 @@ def extract_metadata(soup: BeautifulSoup, url: str) -> dict:
                     meta['author'] = meta['author'] or a
             meta['published_at'] = meta['published_at'] or item.get('datePublished')
             meta['description'] = meta['description'] or item.get('description')
+
+            # source_type from @type
+            if meta['source_type'] == 'unknown':
+                t = item.get('@type')
+                if isinstance(t, list) and t:
+                    t = t[0]
+                if t == 'NewsArticle':       meta['source_type'] = 'article'
+                elif t == 'BlogPosting':     meta['source_type'] = 'article'
+                elif t == 'TechArticle':     meta['source_type'] = 'article'
+                elif t == 'ScholarlyArticle': meta['source_type'] = 'paper'
+                elif t == 'Product':          meta['source_type'] = 'product'
+                elif t == 'QAPage':           meta['source_type'] = 'forum'
+                elif t == 'FAQPage':          meta['source_type'] = 'article'
+                elif t == 'WebPage':          meta['source_type'] = 'article'
+
+            # updated_at
+            if not meta['updated_at']:
+                meta['updated_at'] = item.get('dateModified')
+            # Fallback source_type from og:type
+            if meta['source_type'] == 'unknown':
+                og_type = soup.find('meta', property='og:type')
+                if og_type and og_type.get('content'):
+                    t = og_type['content'].strip().lower()
+                    if t in ('article', 'news'):
+                        meta['source_type'] = 'article'
+                    elif t == 'product':
+                        meta['source_type'] = 'product'
+                    elif t == 'website':
+                        meta['source_type'] = 'website'
 
     return meta
 
@@ -776,14 +809,13 @@ async def process_one(
     html = None
     status = None
     error = None
-    final_url = url
-    headers = {}
+
 
     for attempt in range(max_retries + 1):
         if page is not None and HAS_PLAYWRIGHT:
-            html, status, error = await fetch_with_playwright(page, url, timeout_ms)
+            html, status, final_url, headers, error = await fetch_with_playwright(page, url, timeout_ms)
         else:
-            html, status, error = await fetch_plain(url, timeout_ms)
+            html, status, final_url, headers, error = await fetch_plain(url, timeout_ms)
 
         outcome, reason = classify_fetch(status, html, error)
         if outcome == 'ok':
@@ -823,6 +855,10 @@ async def process_one(
         fm_lines.append(f"language: {meta['language']}")
     if meta.get('description'):
         fm_lines.append(f"description: {json.dumps(meta['description'])}")
+    if meta.get('updated_at'):
+        fm_lines.append(f"updated_at: {json.dumps(meta['updated_at'])}")
+    if meta.get('source_type') and meta['source_type'] != 'unknown':
+        fm_lines.append(f"source_type: {meta['source_type']}")
 
     frontmatter = "---\n" + "\n".join(fm_lines) + "\n---\n\n"
     md_path.write_text(
@@ -840,9 +876,9 @@ async def process_one(
       UPDATE url_queue SET status='fetched', updated_at=? WHERE url_id=?
     """, (utcnow(), url_id))
 
-    record_doc_stage(conn, run_id, url_id, 'fetch', 'ok',
+    record_doc_stage(conn, run_id, slug, 'fetch', 'ok',
                      counts={'bytes': len(html), 'status': status})
-    record_doc_stage(conn, run_id, url_id, 'extract', 'ok',
+    record_doc_stage(conn, run_id, slug, 'extract', 'ok',
                      counts={'blocks': len(blocks), 'chars': len(markdown)})
     conn.commit()
 

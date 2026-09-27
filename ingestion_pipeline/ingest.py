@@ -256,16 +256,18 @@ def load_doc(conn: sqlite3.Connection, ast: dict, run_id: str | None = None) -> 
     conn.execute("""
         INSERT INTO documents
         (doc_id, source_url, canonical_url, title, author, published_at,
-         language, description, content_hash, frontmatter_json,
-         first_ingested_at, last_ingested_at)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+         updated_at, language, description, source_type, content_hash,
+         frontmatter_json, first_ingested_at, last_ingested_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       ON CONFLICT(doc_id) DO UPDATE SET
         source_url       = excluded.source_url,
         title            = excluded.title,
         author           = excluded.author,
         published_at     = excluded.published_at,
+        updated_at       = excluded.updated_at,
         language         = excluded.language,
         description      = excluded.description,
+        source_type      = excluded.source_type,
         content_hash     = excluded.content_hash,
         frontmatter_json = excluded.frontmatter_json,
         last_ingested_at = excluded.last_ingested_at
@@ -273,8 +275,10 @@ def load_doc(conn: sqlite3.Connection, ast: dict, run_id: str | None = None) -> 
         doc_id, source_url, source_url, title,
         frontmatter.get('author'),
         frontmatter.get('published_at'),
+        frontmatter.get('updated_at'),
         frontmatter.get('language'),
         frontmatter.get('description'),
+        frontmatter.get('source_type') or 'unknown',
         content_hash,
         json.dumps(frontmatter) if frontmatter else None,
         now, now,
