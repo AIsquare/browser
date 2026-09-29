@@ -16,6 +16,7 @@ Env:
 """
 from __future__ import annotations
 
+import argparse
 import hashlib
 import json
 import uuid
@@ -29,18 +30,13 @@ load_dotenv()
 
 from db import connect
 
-# try:
-#     from openai import OpenAI
-# except ImportError:
-#     print("pip install openai")
-#     sys.exit(1)
 try:
     from together import Together
 except ImportError:
     print("pip install together")
     sys.exit(1)
 
-MODEL = os.environ.get('TOGETHER_MODEL', 'zai-org/GLM-5.3')
+MODEL = os.environ.get('TOGETHER_MODEL', 'zai-org/GLM-5.3-Flash')
 TEMPERATURE  = float(os.environ.get('SYNTH_TEMPERATURE', '0.2'))
 TOPIC_OVERRIDE = os.environ.get('SYNTH_TOPIC')
 DRY_RUN      = os.environ.get('SYNTH_DRY_RUN', '0') == '1'
@@ -598,6 +594,7 @@ The final output should read as a coherent, deeply researched article assembled 
 # ----------------------------------------------------------------------
 # Load
 # ----------------------------------------------------------------------
+
 def load_bucket_images(conn, max_per_bucket=8):
     """
     Returns {bucket: [{url, alt, section_heading}, ...]}.
@@ -619,7 +616,6 @@ def load_bucket_images(conn, max_per_bucket=8):
         AND i.url NOT LIKE '%favicon%'
     """).fetchall()
 
-    # section_id -> bucket (from any atom in that section)
     sec_role = {}
     for r in conn.execute("""
       SELECT DISTINCT a.section_id, b.bucket
@@ -640,35 +636,11 @@ def load_bucket_images(conn, max_per_bucket=8):
             'section_heading': r['section_heading'] or '',
         })
 
-    # Sort by alt length desc, cap
     for bucket in by_bucket:
         by_bucket[bucket].sort(key=lambda x: -len(x['alt']))
         by_bucket[bucket] = by_bucket[bucket][:max_per_bucket]
 
     return by_bucket
-
-def build_user_prompt(topic, buckets, images_by_bucket):
-    lines = [f"# Topic\n\n{topic}\n"]
-    lines.append("# Sections and atoms\n")
-
-    for name in BUCKET_ORDER:
-        atoms = buckets.get(name, [])
-        images = images_by_bucket.get(name, [])
-        if not atoms and not images:
-            continue
-
-        lines.append(f"\n## {name}\n")
-
-        for a in atoms:
-            lines.append(f"- [{a['atom_id']}] {a['text']}")
-
-        if images:
-            lines.append(f"\n### Available images for {name}\n")
-            for img in images:
-                lines.append(f"- ![{img['alt']}]({img['url']})")
-            lines.append("")
-
-    return '\n'.join(lines)
 
 
 def utcnow():
@@ -713,7 +685,6 @@ def infer_topic(conn):
     if not titles:
         return 'the subject described by the atoms below'
 
-    # Shortest reasonable title is usually the most generic and accurate.
     titles.sort(key=lambda t: len(t))
     for t in titles:
         if len(t) < 120:
@@ -753,36 +724,24 @@ def build_user_prompt(topic, buckets, images_by_bucket):
 # LLM
 # ----------------------------------------------------------------------
 
-# def call_llm(system, user):
-#     if DRY_RUN:
-#         return None
-
-#     client = OpenAI(api_key=os.environ['OPENAI_API_KEY'])
-#     response = client.chat.completions.create(
-#         model=MODEL,
-#         messages=[
-#             {'role': 'system', 'content': system},
-#             {'role': 'user',   'content': user},
-#         ],
-#         temperature=TEMPERATURE,
-#     )
-#     return response
 def call_llm(system, user):
     if DRY_RUN:
         return None
 
-    client = Together(timeout=1200.0,max_retries=5)  # reads TOGETHER_API_KEY from env
+    client = Together(timeout=1200.0, max_retries=5)
 
     response = client.chat.completions.create(
-    model=MODEL,
-    messages=[
-        {"role": "system", "content": system},
-        {"role": "user", "content": user},
-    ],
-    temperature=TEMPERATURE,
-    reasoning_effort="low",
+        model=MODEL,
+        messages=[
+            {"role": "system", "content": system},
+            {"role": "user", "content": user},
+        ],
+        temperature=TEMPERATURE,
+        reasoning_effort="low",
+        max_tokens=32768,
     )
     return response
+
 
 def clean_output(text):
     """Remove any leaked atom id markers like [abc123def456]."""
@@ -792,22 +751,6 @@ def clean_output(text):
 # ----------------------------------------------------------------------
 # Save
 # ----------------------------------------------------------------------
-
-def ensure_articles_table(conn):
-    conn.execute("""
-      CREATE TABLE IF NOT EXISTS articles (
-        article_id         TEXT PRIMARY KEY,
-        topic_id           TEXT,
-        synthesis_run_id   TEXT,
-        title              TEXT,
-        markdown           TEXT NOT NULL,
-        model              TEXT,
-        created_at         TEXT NOT NULL,
-        atom_ids_json      TEXT,
-        notes              TEXT
-      )
-    """)
-
 
 def save_article(conn, run_id, topic, markdown, atom_ids, usage):
     article_id = sha16(run_id + '|' + topic)
@@ -830,58 +773,73 @@ def save_article(conn, run_id, topic, markdown, atom_ids, usage):
         json.dumps(atom_ids),
         json.dumps({'usage': usage}),
     ))
+    return article_id
+
 
 # ----------------------------------------------------------------------
 # Main
 # ----------------------------------------------------------------------
 
-def main():
-    print(f"model       : {MODEL}")
-    print(f"temperature : {TEMPERATURE}")
-    print(f"dry run     : {DRY_RUN}")
-    print()
+def run(topic: str | None = None,
+        run_id: str | None = None,
+        verbose: bool = True) -> dict | None:
+    """
+    Synthesize one article from the current atom_buckets.
+    Returns {'article_id', 'trace_id', 'chars', 'tokens', 'cost'} or None on early exit.
+    """
+    if verbose:
+        print(f"model       : {MODEL}")
+        print(f"temperature : {TEMPERATURE}")
+        print(f"dry run     : {DRY_RUN}")
+        print()
 
     conn = connect()
-    ensure_articles_table(conn)
 
     buckets = load_bucketed_atoms(conn)
     if not buckets:
-        print("no atoms in atom_buckets. Run outline.py first.")
+        if verbose:
+            print("no atoms in atom_buckets. Run outline.py first.")
         conn.close()
-        return
+        return None
+
     images_by_bucket = load_bucket_images(conn)
-    topic = infer_topic(conn)
-    print(f"topic       : {topic}")
-    print()
-    print("bucket sizes:")
-    for name in BUCKET_ORDER:
-        n = len(buckets.get(name, []))
-        m = len(images_by_bucket.get(name, []))
-        print(f"  {name:12s} {n} atoms, {m} images")
+    resolved_topic = topic or infer_topic(conn)
 
-    user_prompt = build_user_prompt(topic, buckets, images_by_bucket)
+    if verbose:
+        print(f"topic       : {resolved_topic}")
+        print()
+        print("bucket sizes:")
+        for name in BUCKET_ORDER:
+            n = len(buckets.get(name, []))
+            m = len(images_by_bucket.get(name, []))
+            print(f"  {name:12s} {n} atoms, {m} images")
 
+    user_prompt = build_user_prompt(resolved_topic, buckets, images_by_bucket)
     total_atoms = sum(len(v) for v in buckets.values())
-    print()
-    print(f"atoms fed to prompt : {total_atoms}")
-    print(f"user prompt chars   : {len(user_prompt)}")
+
+    if verbose:
+        print()
+        print(f"atoms fed to prompt : {total_atoms}")
+        print(f"user prompt chars   : {len(user_prompt)}")
 
     if DRY_RUN:
-        print()
-        print("=== SYSTEM PROMPT ===")
-        print(SYSTEM_PROMPT)
-        print()
-        print("=== USER PROMPT (first 2000 chars) ===")
-        print(user_prompt[:2000])
-        print()
-        print("(dry run — no LLM call, no DB write)")
+        if verbose:
+            print()
+            print("=== SYSTEM PROMPT ===")
+            print(SYSTEM_PROMPT)
+            print()
+            print("=== USER PROMPT (first 2000 chars) ===")
+            print(user_prompt[:2000])
+            print()
+            print("(dry run — no LLM call, no DB write)")
         conn.close()
-        return
+        return None
 
-    print()
-    print(f"calling {MODEL} ...")
+    if verbose:
+        print()
+        print(f"calling {MODEL} ...")
+
     response = call_llm(SYSTEM_PROMPT, user_prompt)
-
     if response is None:
         raise RuntimeError("call_llm returned None (did DRY_RUN leak?)")
 
@@ -889,7 +847,6 @@ def main():
     message = choice.message if choice else None
 
     content = getattr(message, 'content', None) if message else None
-    # thinking models sometimes route text to these fields instead
     if (not isinstance(content, str) or not content.strip()) and message is not None:
         content = (
             getattr(message, 'reasoning', None)
@@ -920,17 +877,18 @@ def main():
 
     atom_ids = [a['atom_id'] for v in buckets.values() for a in v]
 
-    run_id = sha16(f"synthesize-{utcnow()}")
+    if run_id is None:
+        run_id = sha16(f"synthesize-{utcnow()}")
+
     conn.execute("""
       INSERT INTO pipeline_runs (run_id, started_at, status, stages_json)
       VALUES (%s, %s, 'completed', %s)
+      ON CONFLICT (run_id) DO NOTHING
     """, (run_id, utcnow(), '["synthesize"]'))
 
-    save_article(conn, run_id, topic, markdown, atom_ids, usage)
+    article_id = save_article(conn, run_id, resolved_topic, markdown, atom_ids, usage)
 
-    # -- synthesis trace --
     trace_id = uuid.uuid4().hex[:16]
-    article_id = sha16(run_id + '|' + topic)
     reasoning = (
         getattr(message, 'reasoning_content', None)
         or getattr(message, 'reasoning', None)
@@ -950,22 +908,43 @@ def main():
     ))
 
     conn.commit()
+    conn.close()
 
     with open(DRAFT_PATH, 'w', encoding='utf-8', errors='replace') as f:
         f.write(markdown)
 
-    print()
-    print(f"output chars      : {len(markdown)}")
-    print(f"output tokens     : {usage['completion_tokens']}")
-    print(f"input tokens      : {usage['prompt_tokens']}")
-    # Together GLM-5.3 pricing (approximate)
     in_cost  = usage['prompt_tokens']     * 0.15 / 1e6
     out_cost = usage['completion_tokens'] * 0.50 / 1e6
-    print(f"estimated cost    : ${in_cost + out_cost:.4f}")
-    print(f"wrote             : {DRAFT_PATH}")
-    print(f"saved article_id  : {run_id[:16]}")
+    cost     = in_cost + out_cost
 
-    conn.close()
+    if verbose:
+        print()
+        print(f"output chars      : {len(markdown)}")
+        print(f"output tokens     : {usage['completion_tokens']}")
+        print(f"input tokens      : {usage['prompt_tokens']}")
+        print(f"estimated cost    : ${cost:.4f}")
+        print(f"wrote             : {DRAFT_PATH}")
+        print(f"saved article_id  : {article_id}")
+        print(f"saved trace_id    : {trace_id}")
+
+    return {
+        'article_id': article_id,
+        'trace_id':   trace_id,
+        'chars':      len(markdown),
+        'tokens':     usage['completion_tokens'],
+        'cost':       cost,
+    }
+
+
+def main():
+    ap = argparse.ArgumentParser()
+    ap.add_argument('--topic', default=None,
+                    help='override topic; otherwise inferred from documents')
+    ap.add_argument('--run-id', default=None,
+                    help='pipeline_runs.run_id to attribute this run to')
+    args = ap.parse_args()
+    run(topic=args.topic, run_id=args.run_id)
+
 
 if __name__ == '__main__':
     main()

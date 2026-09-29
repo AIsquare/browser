@@ -867,86 +867,144 @@ async def process_one(
 # Main
 # =====================================================================
 
-async def run(args):
-    urls_path = Path(args.urls)
-    if not urls_path.exists():
-        print(f"error: url file not found: {urls_path}", file=sys.stderr)
-        sys.exit(1)
+async def run(urls: str | Path | list[str],
+              out_dir: str | Path = 'extracted',
+              run_id: str | None = None,
+              rate_limit: float = 2.0,
+              timeout: int = 60000,
+              max_retries: int = 2,
+              concurrency: int = 4,
+              no_js: bool = False,
+              verbose: bool = True) -> dict:
+    """
+    Crawl a list of URLs and write extracted content + DB records.
+    urls may be a path to a .txt file or an explicit list.
+    Returns {'ok': N, 'rejected': N, 'errored': N, 'total': N, 'run_id': str}.
+    """
+    # Resolve urls input
+    if isinstance(urls, (str, Path)):
+        urls_path = Path(urls)
+        if not urls_path.exists():
+            raise FileNotFoundError(f"url file not found: {urls_path}")
+        url_list = [
+            u.strip() for u in urls_path.read_text(encoding='utf-8').splitlines()
+            if u.strip() and u.startswith(('http://', 'https://'))
+        ]
+    else:
+        url_list = [u for u in urls if u.startswith(('http://', 'https://'))]
 
-    urls = [u.strip() for u in urls_path.read_text(encoding='utf-8').splitlines() if u.strip()]
-    urls = [u for u in urls if u.startswith(('http://', 'https://'))]
-    print(f"loaded {len(urls)} urls")
+    if verbose:
+        print(f"loaded {len(url_list)} urls")
 
-    out_dir = Path(args.out)
-    out_dir.mkdir(parents=True, exist_ok=True)
+    out_path = Path(out_dir)
+    out_path.mkdir(parents=True, exist_ok=True)
 
     conn = connect()
-    run_id = sha16(f"crawl-{utcnow()}-{len(urls)}")
-    ensure_run(conn, run_id, None, len(urls))
+    if run_id is None:
+        run_id = sha16(f"crawl-{utcnow()}-{len(url_list)}")
+
+    ensure_run(conn, run_id, None, len(url_list))
     conn.commit()
 
     last_hit: dict[str, float] = defaultdict(float)
+    domain_locks: dict[str, asyncio.Lock] = {}
+    sem = asyncio.Semaphore(concurrency)
+
+    def _domain_lock(domain: str) -> asyncio.Lock:
+        if domain not in domain_locks:
+            domain_locks[domain] = asyncio.Lock()
+        return domain_locks[domain]
 
     async def gate(url: str):
         p = urlparse(url)
         domain = domain_of(url)
 
-        parser = await get_robots(p.scheme or 'https', domain, args.timeout)
+        parser = await get_robots(p.scheme or 'https', domain, timeout)
         if not robots_can_fetch(parser, url, USER_AGENT):
             return False, 'robots_disallow'
 
         site_delay = robots_crawl_delay(parser, USER_AGENT)
-        effective_delay = max(args.rate_limit, site_delay or 0.0)
+        effective_delay = max(rate_limit, site_delay or 0.0)
 
-        now = time.monotonic()
-        wait = effective_delay - (now - last_hit[domain])
-        if wait > 0:
-            await asyncio.sleep(wait)
-        last_hit[domain] = time.monotonic()
+        async with _domain_lock(domain):
+            now = time.monotonic()
+            wait = effective_delay - (now - last_hit[domain])
+            if wait > 0:
+                await asyncio.sleep(wait)
+            last_hit[domain] = time.monotonic()
 
         return True, None
 
     results = []
 
-    if args.no_js or not HAS_PLAYWRIGHT:
-        if not HAS_PLAYWRIGHT and not args.no_js:
+    if no_js or not HAS_PLAYWRIGHT:
+        if not HAS_PLAYWRIGHT and not no_js and verbose:
             print("playwright not installed — falling back to plain HTTP")
-        for url in urls:
-            allowed, reason = await gate(url)
-            if not allowed:
-                url_id = ensure_url(conn, url)
-                record_reject(conn, url_id, url, reason, None, None)
-                conn.commit()
-                print(f"  rejected   {url[:80]}  ({reason})")
-                results.append({'url': url, 'status': 'rejected', 'reason': reason})
-                continue
-            r = await process_one(url, run_id, out_dir, conn, None, args.timeout, args.max_retries)
+
+        async def fetch_task(url: str):
+            try:
+                async with sem:
+                    allowed, reason = await gate(url)
+                    if not allowed:
+                        url_id = ensure_url(conn, url)
+                        record_reject(conn, url_id, url, reason, None, None)
+                        conn.commit()
+                        return url, {'url': url, 'status': 'rejected', 'reason': reason}
+                    r = await process_one(
+                        url, run_id, out_path, conn, None,
+                        timeout, max_retries,
+                    )
+                    return url, r
+            except Exception as e:
+                return url, {'url': url, 'status': 'error', 'reason': str(e)}
+
+        tasks = [asyncio.create_task(fetch_task(u)) for u in url_list]
+        for coro in asyncio.as_completed(tasks):
+            url, r = await coro
             results.append(r)
-            print(f"  {r['status']:9s}  {url[:80]}")
+            if verbose:
+                print(f"  {r['status']:9s}  {url[:80]}")
     else:
         async with async_playwright() as p:
             browser = await p.chromium.launch(headless=True)
             context = await browser.new_context(user_agent=USER_AGENT)
-            page = await context.new_page()
 
-            for url in urls:
-                allowed, reason = await gate(url)
-                if not allowed:
-                    url_id = ensure_url(conn, url)
-                    record_reject(conn, url_id, url, reason, None, None)
-                    conn.commit()
-                    print(f"  rejected   {url[:80]}  ({reason})")
-                    results.append({'url': url, 'status': 'rejected', 'reason': reason})
-                    continue
-                r = await process_one(url, run_id, out_dir, conn, page, args.timeout, args.max_retries)
+            async def fetch_task(url: str):
+                try:
+                    async with sem:
+                        allowed, reason = await gate(url)
+                        if not allowed:
+                            url_id = ensure_url(conn, url)
+                            record_reject(conn, url_id, url, reason, None, None)
+                            conn.commit()
+                            return url, {'url': url, 'status': 'rejected', 'reason': reason}
+                        page = await context.new_page()
+                        try:
+                            r = await process_one(
+                                url, run_id, out_path, conn, page,
+                                timeout, max_retries,
+                            )
+                            return url, r
+                        finally:
+                            await page.close()
+                except Exception as e:
+                    return url, {'url': url, 'status': 'error', 'reason': str(e)}
+
+            tasks = [asyncio.create_task(fetch_task(u)) for u in url_list]
+            for coro in asyncio.as_completed(tasks):
+                url, r = await coro
                 results.append(r)
-                print(f"  {r['status']:9s}  {url[:80]}")
+                if verbose:
+                    print(f"  {r['status']:9s}  {url[:80]}")
 
             await browser.close()
 
     ok = sum(1 for r in results if r['status'] == 'ok')
     rejected = sum(1 for r in results if r['status'] == 'rejected')
-    print(f"\ndone: {ok} ok, {rejected} rejected, {len(results)} total")
+    errored = sum(1 for r in results if r['status'] == 'error')
+
+    if verbose:
+        print(f"\ndone: {ok} ok, {rejected} rejected, {errored} errored, {len(results)} total")
 
     conn.execute("""
       UPDATE pipeline_runs SET status='completed', finished_at=%s WHERE run_id=%s
@@ -954,11 +1012,33 @@ async def run(args):
     conn.commit()
     conn.close()
 
+    return {
+        'ok': ok,
+        'rejected': rejected,
+        'errored': errored,
+        'total': len(results),
+        'run_id': run_id,
+    }
+
+
+def run_sync(urls, out_dir='extracted', run_id=None, rate_limit=2.0,
+             timeout=60000, max_retries=2, concurrency=4,
+             no_js=False, verbose=True) -> dict:
+    """Sync wrapper for non-async callers (worker)."""
+    return asyncio.run(run(
+        urls=urls, out_dir=out_dir, run_id=run_id,
+        rate_limit=rate_limit, timeout=timeout,
+        max_retries=max_retries, concurrency=concurrency,
+        no_js=no_js, verbose=verbose,
+    ))
+
 
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument('--urls', required=True, help='file with one URL per line')
     ap.add_argument('--out', default='extracted', help='output directory')
+    ap.add_argument('--concurrency', type=int, default=4,
+                    help='max simultaneous fetches (default 4)')
     ap.add_argument('--rate-limit', type=float, default=2.0,
                     help='min seconds between fetches to same domain')
     ap.add_argument('--timeout', type=int, default=60000, help='page timeout ms')
@@ -966,7 +1046,16 @@ def main():
     ap.add_argument('--no-js', action='store_true',
                     help='disable Playwright, use plain HTTP')
     args = ap.parse_args()
-    asyncio.run(run(args))
+
+    run_sync(
+        urls=args.urls,
+        out_dir=args.out,
+        rate_limit=args.rate_limit,
+        timeout=args.timeout,
+        max_retries=args.max_retries,
+        concurrency=args.concurrency,
+        no_js=args.no_js,
+    )
 
 
 if __name__ == '__main__':

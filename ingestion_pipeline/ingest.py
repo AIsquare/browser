@@ -11,6 +11,7 @@ Idempotent: re-running on the same doc deletes and rebuilds its rows.
 """
 from __future__ import annotations
 
+import argparse
 import json
 import re
 from datetime import datetime, timezone
@@ -280,7 +281,6 @@ def load_doc(conn, ast: dict, run_id: str | None = None) -> dict:
       DELETE FROM atom_buckets
       WHERE atom_id IN (SELECT atom_id FROM atoms WHERE doc_id=%s)
     """, (doc_id,))
-    conn.execute("DELETE FROM cluster_members WHERE doc_id=%s", (doc_id,))
 
     conn.execute("DELETE FROM atoms WHERE doc_id=%s", (doc_id,))
     conn.execute("DELETE FROM links WHERE doc_id=%s", (doc_id,))
@@ -435,17 +435,28 @@ def load_doc(conn, ast: dict, run_id: str | None = None) -> dict:
 # Main
 # ----------------------------------------------------------------------
 
-def main():
-    json_files = sorted(BLOCKS_DIR.glob('*.json'))
+
+def run(blocks_dir: Path | None = None,
+        run_id: str | None = None) -> dict:
+    """
+    Load every block JSON in blocks_dir into the DB.
+    Returns {'docs': N, 'blocks': M, 'atoms': K, 'sections': S, 'run_id': str}.
+    """
+    src = Path(blocks_dir) if blocks_dir else BLOCKS_DIR
+    json_files = sorted(src.glob('*.json'))
+
     if not json_files:
-        print(f"no JSON files in {BLOCKS_DIR}")
-        return
+        print(f"no JSON files in {src}")
+        return {'docs': 0, 'blocks': 0, 'atoms': 0, 'sections': 0, 'run_id': None}
 
     conn = connect()
-    run_id = sha16(f"ingest-{utcnow()}")
+    if run_id is None:
+        run_id = sha16(f"ingest-{utcnow()}")
+
     conn.execute("""
       INSERT INTO pipeline_runs (run_id, started_at, status, stages_json)
       VALUES (%s, %s, 'running', %s)
+      ON CONFLICT (run_id) DO NOTHING
     """, (run_id, utcnow(), json.dumps(['load'])))
 
     total = {'docs': 0, 'blocks': 0, 'atoms': 0, 'sections': 0}
@@ -477,6 +488,19 @@ def main():
           f"{total['blocks']} blocks, "
           f"{total['atoms']} atoms, "
           f"{total['sections']} sections")
+
+    total['run_id'] = run_id
+    return total
+
+
+def main():
+    ap = argparse.ArgumentParser()
+    ap.add_argument('--blocks-dir', default=str(BLOCKS_DIR),
+                    help='directory containing block JSONs')
+    ap.add_argument('--run-id', default=None,
+                    help='pipeline_runs.run_id to attribute this run to')
+    args = ap.parse_args()
+    run(blocks_dir=args.blocks_dir, run_id=args.run_id)
 
 
 if __name__ == '__main__':

@@ -16,7 +16,7 @@ New vs. previous version:
 Still no LLM, no semantic judgment. Purely structural.
 """
 from __future__ import annotations
-
+import argparse
 import hashlib
 import json
 import re
@@ -432,25 +432,57 @@ def ingest_file(md_path: Path) -> dict:
     }
 
 
-def main():
-    OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
-    md_files = sorted(INPUT_DIR.glob('*.md'))
+def run(input_dir: Path | None = None,
+        output_dir: Path | None = None) -> dict:
+    """
+    Parse every .md in input_dir and write AST JSON to output_dir.
+    Returns a summary dict.
+    """
+    in_dir = Path(input_dir) if input_dir else INPUT_DIR
+    out_dir = Path(output_dir) if output_dir else OUTPUT_DIR
+
+    out_dir.mkdir(parents=True, exist_ok=True)
+    md_files = sorted(in_dir.glob('*.md'))
+
     if not md_files:
-        print(f"no .md files in {INPUT_DIR}")
-        return
+        print(f"no .md files in {in_dir}")
+        return {'docs': 0, 'blocks': 0, 'files': []}
+
+    total_docs = 0
+    total_blocks = 0
+    written = []
 
     for md_path in md_files:
         result = ingest_file(md_path)
         result = _scrub(result)
-        out_path = OUTPUT_DIR / f"{result['doc_id']}.json"
+        out_path = out_dir / f"{result['doc_id']}.json"
         out_path.write_text(
             json.dumps(result, indent=2, ensure_ascii=False),
             encoding='utf-8',
         )
+        total_docs += 1
+        total_blocks += result['total_blocks']
+        written.append(str(out_path))
         print(f"{result['doc_id'][:60]:60s}  "
               f"{result['total_blocks']:4d} blocks  "
               f"boiler: {result['boilerplate_count']:2d}  "
               f"math: {result['math_count']:2d}")
+
+    return {
+        'docs': total_docs,
+        'blocks': total_blocks,
+        'files': written,
+    }
+
+
+def main():
+    ap = argparse.ArgumentParser()
+    ap.add_argument('--input',  default=str(INPUT_DIR),
+                    help='directory containing .md files')
+    ap.add_argument('--output', default=str(OUTPUT_DIR),
+                    help='directory to write block JSONs to')
+    args = ap.parse_args()
+    run(input_dir=args.input, output_dir=args.output)
 
 
 if __name__ == '__main__':

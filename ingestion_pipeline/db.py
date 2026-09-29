@@ -32,3 +32,16 @@ def connect(url: str | None = None) -> psycopg.Connection:
         # prepare_threshold=None,  # uncomment if Neon pooler rejects prepares
     )
     return conn
+
+def connect_signal(url: str | None = None) -> psycopg.Connection:
+    url = url or os.environ.get('DATABASE_URL_SIGNAL')
+    if not url:
+        raise RuntimeError(
+            "DATABASE_URL_SIGNAL not set. Copy the signal-database "
+            "connection string from the Neon console into .env."
+        )
+    return psycopg.connect(
+        url,
+        row_factory=dict_row,
+        autocommit=False,
+    )

@@ -41,7 +41,6 @@ STAGES = [
     ('crawl',      'dom_extract.py',    None,                 600),
     ('parse',      'ast_ingest_v2.py',  None,                 300),
     ('load',       'ingest.py',         None,                 300),
-    ('cluster',    'cluster.py',        None,                 120),
     ('outline',    'outline.py',        None,                 600),
     ('synthesize', 'synthesize.py',     None,                1200),
 ]

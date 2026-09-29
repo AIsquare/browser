@@ -15,7 +15,7 @@ Env:
   TYPESAFE_MODEL     default jev-latest
 """
 from __future__ import annotations
-
+import argparse
 import hashlib
 import json
 import os
@@ -180,31 +180,56 @@ def store(conn, results):
     return counts
 
 
-def main():
-    print(f"model : {MODEL}")
-    print(f"batch : {BATCH}")
-    print()
+# ----------------------------------------------------------------------
+# Main
+# ----------------------------------------------------------------------
 
+def run(run_id: str | None = None,
+        batch_size: int | None = None,
+        verbose: bool = True) -> dict:
+    """
+    Classify all section headings via JEV, populate atom_buckets,
+    mark chrome sections. Returns counts and run metadata.
+    """
+    bs = batch_size if batch_size else BATCH
     conn = connect()
-    run_id = sha16(f"outline-{utcnow()}")
+
+    if run_id is None:
+        run_id = sha16(f"outline-{utcnow()}")
+
+    if verbose:
+        print(f"model : {MODEL}")
+        print(f"batch : {bs}")
+        print()
+
     conn.execute("""
       INSERT INTO pipeline_runs (run_id, started_at, status, stages_json)
       VALUES (%s, %s, 'running', %s)
+      ON CONFLICT (run_id) DO NOTHING
     """, (run_id, utcnow(), '["outline"]'))
 
     headings = load_headings(conn)
-    print(f"headings loaded : {len(headings)}")
+    if verbose:
+        print(f"headings loaded : {len(headings)}")
 
     if not headings:
-        print("nothing to classify")
+        if verbose:
+            print("nothing to classify")
         conn.close()
-        return
+        return {
+            'run_id': run_id,
+            'headings': 0,
+            'atoms_bucketed': 0,
+            'chrome_sections': 0,
+            'counts': {},
+        }
 
     client = TypeSafeClient()
     results = {}
-    for i in range(0, len(headings), BATCH):
-        chunk = headings[i:i + BATCH]
-        print(f"  batch {i//BATCH + 1} ({len(chunk)} headings)")
+    for i in range(0, len(headings), bs):
+        chunk = headings[i:i + bs]
+        if verbose:
+            print(f"  batch {i//bs + 1} ({len(chunk)} headings)")
         results.update(classify(client, chunk))
 
     counts = store(conn, results)
@@ -214,19 +239,39 @@ def main():
     """, (utcnow(), run_id))
     conn.commit()
 
-    print()
-    print(f"atoms with bucket : {sum(counts.values())}")
-    print()
-    print("bucket distribution:")
-    for name in ROLES.keys():
-        n = counts.get(name, 0)
-        bar = '█' * min(int(n / 3), 40)
-        print(f"  {name:12s} {n:4d}  {bar}")
-
     chrome_count = sum(1 for a in results.values() if a['is_chrome'] > 0.7)
-    print(f"\nchrome sections dropped : {chrome_count}")
+    total_bucketed = sum(counts.values())
+
+    if verbose:
+        print()
+        print(f"atoms with bucket : {total_bucketed}")
+        print()
+        print("bucket distribution:")
+        for name in ROLES.keys():
+            n = counts.get(name, 0)
+            bar = '█' * min(int(n / 3), 40)
+            print(f"  {name:12s} {n:4d}  {bar}")
+        print(f"\nchrome sections dropped : {chrome_count}")
 
     conn.close()
+
+    return {
+        'run_id': run_id,
+        'headings': len(headings),
+        'atoms_bucketed': total_bucketed,
+        'chrome_sections': chrome_count,
+        'counts': counts,
+    }
+
+
+def main():
+    ap = argparse.ArgumentParser()
+    ap.add_argument('--run-id', default=None,
+                    help='pipeline_runs.run_id to attribute this run to')
+    ap.add_argument('--batch-size', type=int, default=None,
+                    help=f'headings per JEV call (default: {BATCH})')
+    args = ap.parse_args()
+    run(run_id=args.run_id, batch_size=args.batch_size)
 
 
 if __name__ == '__main__':
