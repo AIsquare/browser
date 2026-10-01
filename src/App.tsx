@@ -19,6 +19,7 @@ export default function App() {
   
   const [mode, setMode] = useState<DeckMode>('vertical-cascade');
   const [searchQuery, setSearchQuery] = useState<string>('');
+  const [currentSearchQuery, setCurrentSearchQuery] = useState<string>('');
   const [selectedCategory, setSelectedCategory] = useState<string>('All');
   const [hapticsEnabled, setHapticsEnabled] = useState<boolean>(true);
   const [soundEnabled, setSoundEnabled] = useState<boolean>(true);
@@ -199,6 +200,7 @@ export default function App() {
     setDiscardedCards([]);
     setSelectedCard(null);
     setSearchQuery('');
+    setCurrentSearchQuery('');
     setSelectedCategory('All');
     triggerSensory('snap');
     showToast('Re-dealt all 10 cards to active deck', 'keep');
@@ -224,6 +226,9 @@ export default function App() {
       const data = await res.json();
       if (data.cards && data.cards.length > 0) {
         setCards(data.cards);
+        setCurrentSearchQuery(query.trim());
+        setKeptCards([]);
+        setDiscardedCards([]);
         setSelectedCard(null);
         setSearchQuery('');
         setSelectedCategory('All');
@@ -369,7 +374,7 @@ export default function App() {
             setSelectedCard(card);
             triggerSensory('snap');
           }}
-          searchQuery={searchQuery}
+          searchQuery={currentSearchQuery}
         />
       </main>
     </div>

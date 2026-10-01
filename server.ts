@@ -452,7 +452,7 @@ app.get('/api/proxy-page', async (req, res) => {
 // --------------------------------------------------------------------------
 // 3. Pipeline Ingestion & Synthesis Proxy (FastAPI :8000)
 // --------------------------------------------------------------------------
-const FASTAPI_URL = 'http://127.0.0.1:8000';
+const FASTAPI_URL = process.env.PIPELINE_API_URL || 'http://127.0.0.1:8000';
 
 app.post('/api/pipeline/jobs', async (req, res) => {
   try {

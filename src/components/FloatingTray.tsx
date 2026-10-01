@@ -308,12 +308,15 @@ export function FloatingTray({
           </div>
         )}
       </AnimatePresence>
-      <PipelineModal
-        isOpen={showPipelineModal}
-        onClose={() => setShowPipelineModal(false)}
-        cards={keptCards}
-        searchQuery={searchQuery}
-      />
+      {showPipelineModal && (
+        <PipelineModal
+          key={keptCards.map((card) => card.id).join(',')}
+          isOpen={showPipelineModal}
+          onClose={() => setShowPipelineModal(false)}
+          cards={keptCards}
+          searchQuery={searchQuery}
+        />
+      )}
     </>
   );
 }

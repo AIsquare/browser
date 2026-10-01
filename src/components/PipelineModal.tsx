@@ -54,6 +54,7 @@ export function PipelineModal({ isOpen, onClose, cards, searchQuery }: PipelineM
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [copied, setCopied] = useState(false);
   const pollIntervalRef = useRef<number | null>(null);
+  const pollFailureCountRef = useRef(0);
 
   // Stop polling on unmount
   useEffect(() => {
@@ -106,12 +107,25 @@ export function PipelineModal({ isOpen, onClose, cards, searchQuery }: PipelineM
 
   const startPolling = (id: string) => {
     if (pollIntervalRef.current) clearInterval(pollIntervalRef.current);
+    pollFailureCountRef.current = 0;
+
+    const recordPollingFailure = (message: string) => {
+      pollFailureCountRef.current += 1;
+      if (pollFailureCountRef.current >= 5) {
+        if (pollIntervalRef.current) clearInterval(pollIntervalRef.current);
+        setErrorMessage(`Polling failed 5 consecutive times: ${message}`);
+      }
+    };
 
     pollIntervalRef.current = window.setInterval(async () => {
       try {
         const res = await fetch(`/api/pipeline/jobs/${id}`);
-        if (!res.ok) return;
+        if (!res.ok) {
+          recordPollingFailure(`HTTP ${res.status}`);
+          return;
+        }
 
+        pollFailureCountRef.current = 0;
         const data: PipelineJobStatus = await res.json();
         setJobStatus(data);
 
@@ -119,6 +133,8 @@ export function PipelineModal({ isOpen, onClose, cards, searchQuery }: PipelineM
           if (pollIntervalRef.current) clearInterval(pollIntervalRef.current);
           if (data.article_id) {
             fetchArticle(data.article_id);
+          } else {
+            setErrorMessage('Job finished but no article_id returned');
           }
         } else if (data.status === 'failed') {
           if (pollIntervalRef.current) clearInterval(pollIntervalRef.current);
@@ -126,6 +142,7 @@ export function PipelineModal({ isOpen, onClose, cards, searchQuery }: PipelineM
         }
       } catch (err) {
         console.error('Polling error:', err);
+        recordPollingFailure(err instanceof Error ? err.message : String(err));
       }
     }, 2000);
   };
