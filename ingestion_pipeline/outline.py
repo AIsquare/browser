@@ -5,8 +5,8 @@ Two questions per heading:
   - is_chrome (Noul)  — is this site chrome rather than article content?
   - role      (Choice) — which of the 9 narrative roles?
 
-No thresholds on role. Take the top choice. Store confidence alongside.
-Chrome detected by is_chrome > 0.7 (one threshold, one question).
+Scoped to a list of doc_ids (typically the current job's docs).
+When doc_ids is None, operates on the entire DB.
 
 Writes: atom_buckets, sections.is_boilerplate
 
@@ -15,6 +15,7 @@ Env:
   TYPESAFE_MODEL     default jev-latest
 """
 from __future__ import annotations
+
 import argparse
 import hashlib
 import json
@@ -58,14 +59,32 @@ def sha16(s):
     return hashlib.sha256(s.encode('utf-8')).hexdigest()[:16]
 
 
-def load_headings(conn):
-    rows = conn.execute("""
-      SELECT section_id, heading, heading_path
-      FROM sections
-      WHERE heading IS NOT NULL
-        AND length(trim(heading)) > 0
-        AND COALESCE(is_boilerplate, 0) = 0
-    """).fetchall()
+def _placeholders(n: int) -> str:
+    return ','.join(['%s'] * n)
+
+
+def load_headings(conn, doc_ids=None):
+    if doc_ids is not None and not doc_ids:
+        return []
+
+    if doc_ids is not None:
+        rows = conn.execute(f"""
+          SELECT section_id, heading, heading_path
+          FROM sections
+          WHERE doc_id IN ({_placeholders(len(doc_ids))})
+            AND heading IS NOT NULL
+            AND length(trim(heading)) > 0
+            AND COALESCE(is_boilerplate, 0) = 0
+        """, tuple(doc_ids)).fetchall()
+    else:
+        rows = conn.execute("""
+          SELECT section_id, heading, heading_path
+          FROM sections
+          WHERE heading IS NOT NULL
+            AND length(trim(heading)) > 0
+            AND COALESCE(is_boilerplate, 0) = 0
+        """).fetchall()
+
     out = []
     for r in rows:
         try:
@@ -118,7 +137,11 @@ def classify(client, batch):
     return out
 
 
-def store(conn, results):
+def store(conn, results, doc_ids=None):
+    if doc_ids is not None and not doc_ids:
+        return {}
+
+    # Mark chrome sections
     for sid, ans in results.items():
         if ans['is_chrome'] > 0.7:
             conn.execute(
@@ -126,28 +149,55 @@ def store(conn, results):
                 (sid,)
             )
 
-    conn.execute("DELETE FROM atom_buckets")
+    # Scope DELETE and atom selection to the job's docs
+    if doc_ids is not None:
+        conn.execute(f"""
+          DELETE FROM atom_buckets
+          WHERE atom_id IN (
+            SELECT atom_id FROM atoms WHERE doc_id IN ({_placeholders(len(doc_ids))})
+          )
+        """, tuple(doc_ids))
+        rows = conn.execute(f"""
+          SELECT a.atom_id, a.section_id,
+                 COALESCE(s.is_boilerplate, 0) AS is_boilerplate
+          FROM atoms a
+          LEFT JOIN sections s ON s.section_id = a.section_id
+          WHERE a.doc_id IN ({_placeholders(len(doc_ids))})
+            AND a.section_id IS NOT NULL
+        """, tuple(doc_ids)).fetchall()
+    else:
+        conn.execute("DELETE FROM atom_buckets")
+        rows = conn.execute("""
+          SELECT a.atom_id, a.section_id,
+                 COALESCE(s.is_boilerplate, 0) AS is_boilerplate
+          FROM atoms a
+          LEFT JOIN sections s ON s.section_id = a.section_id
+          WHERE a.section_id IS NOT NULL
+        """).fetchall()
 
+    chrome_sections = {
+        sid for sid, ans in results.items()
+        if ans['is_chrome'] > 0.7
+    }
     sec_to_role = {
         sid: (ans['role'], ans['role_conf'])
         for sid, ans in results.items()
         if ans['is_chrome'] <= 0.7
     }
 
-    rows = conn.execute("""
-      SELECT atom_id, section_id
-      FROM atoms
-      WHERE section_id IS NOT NULL
-    """).fetchall()
-
     batch, counts = [], {}
     for r in rows:
         atom_id = r['atom_id']
         section_id = r['section_id']
-        if section_id not in sec_to_role:
+        if r['is_boilerplate'] or section_id in chrome_sections:
             continue
-        role, conf = sec_to_role[section_id]
-        batch.append((atom_id, None, role, 'typesafe', conf))
+        if section_id in sec_to_role:
+            role, conf = sec_to_role[section_id]
+            method = 'typesafe'
+        else:
+            role, conf = 'Overview', 0.5
+            method = 'default'
+        batch.append((atom_id, None, role, method, conf))
         counts[role] = counts.get(role, 0) + 1
 
         if len(batch) >= 1000:
@@ -180,17 +230,7 @@ def store(conn, results):
     return counts
 
 
-# ----------------------------------------------------------------------
-# Main
-# ----------------------------------------------------------------------
-
-def run(run_id: str | None = None,
-        batch_size: int | None = None,
-        verbose: bool = True) -> dict:
-    """
-    Classify all section headings via JEV, populate atom_buckets,
-    mark chrome sections. Returns counts and run metadata.
-    """
+def run(run_id=None, doc_ids=None, batch_size=None, verbose=True):
     bs = batch_size if batch_size else BATCH
     conn = connect()
 
@@ -200,6 +240,8 @@ def run(run_id: str | None = None,
     if verbose:
         print(f"model : {MODEL}")
         print(f"batch : {bs}")
+        if doc_ids:
+            print(f"scope : {len(doc_ids)} docs")
         print()
 
     conn.execute("""
@@ -208,7 +250,7 @@ def run(run_id: str | None = None,
       ON CONFLICT (run_id) DO NOTHING
     """, (run_id, utcnow(), '["outline"]'))
 
-    headings = load_headings(conn)
+    headings = load_headings(conn, doc_ids=doc_ids)
     if verbose:
         print(f"headings loaded : {len(headings)}")
 
@@ -232,7 +274,7 @@ def run(run_id: str | None = None,
             print(f"  batch {i//bs + 1} ({len(chunk)} headings)")
         results.update(classify(client, chunk))
 
-    counts = store(conn, results)
+    counts = store(conn, results, doc_ids=doc_ids)
 
     conn.execute("""
       UPDATE pipeline_runs SET status='completed', finished_at=%s WHERE run_id=%s
@@ -254,7 +296,6 @@ def run(run_id: str | None = None,
         print(f"\nchrome sections dropped : {chrome_count}")
 
     conn.close()
-
     return {
         'run_id': run_id,
         'headings': len(headings),
@@ -266,10 +307,8 @@ def run(run_id: str | None = None,
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument('--run-id', default=None,
-                    help='pipeline_runs.run_id to attribute this run to')
-    ap.add_argument('--batch-size', type=int, default=None,
-                    help=f'headings per JEV call (default: {BATCH})')
+    ap.add_argument('--run-id', default=None)
+    ap.add_argument('--batch-size', type=int, default=None)
     args = ap.parse_args()
     run(run_id=args.run_id, batch_size=args.batch_size)
 

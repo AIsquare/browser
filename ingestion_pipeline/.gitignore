@@ -1,0 +1,20 @@
+# Env
+.env
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+
+# Pipeline data
+extracted/
+data/
+jobs/
+test_run/
+draft.md
+debug_last_response.json
+
+# Temp
+tmp_*.py
+*.log

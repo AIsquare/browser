@@ -24,6 +24,7 @@ import redis
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel, Field
 from rq import Queue
+from rq.exceptions import NoSuchJobError
 from rq.job import Job
 
 from db import connect, connect_signal
@@ -35,7 +36,13 @@ def utcnow() -> str:
 
 app = FastAPI(title="Pipeline API")
 
-redis_conn = redis.from_url(os.environ.get('REDIS_URL', 'redis://localhost:6379'))
+redis_url = os.environ.get('REDIS_URL', 'redis://localhost:6379')
+redis_conn = redis.from_url(
+    redis_url,
+    socket_timeout=30,
+    socket_connect_timeout=30,
+    ssl_cert_reqs=None if redis_url.startswith('rediss://') else 'required',
+)
 job_queue = Queue('default', connection=redis_conn)
 
 
@@ -131,28 +138,37 @@ def create_job(req: JobRequest):
 def get_job(job_id: str):
     try:
         job = Job.fetch(job_id, connection=redis_conn)
-    except Exception:
+        status = job.get_status()
+        out = {
+            'job_id': job_id,
+            'status': status,
+            'progress': job.meta.get('progress', 0),
+            'stage': job.meta.get('stage'),
+            'error': None,
+            'article_id': None,
+        }
+
+        if status == 'finished':
+            result = job.result or {}
+            out['article_id'] = result.get('article_id')
+            out['trace_id'] = result.get('trace_id')
+            out['progress'] = 100
+        elif status == 'failed':
+            out['error'] = str(job.exc_info or 'unknown error')
+
+        return out
+    except NoSuchJobError:
         raise HTTPException(404, "job not found")
-
-    status = job.get_status()
-    out = {
-        'job_id': job_id,
-        'status': status,
-        'progress': job.meta.get('progress', 0),
-        'stage': job.meta.get('stage'),
-        'error': None,
-        'article_id': None,
-    }
-
-    if status == 'finished':
-        result = job.result or {}
-        out['article_id'] = result.get('article_id')
-        out['trace_id'] = result.get('trace_id')
-        out['progress'] = 100
-    elif status == 'failed':
-        out['error'] = str(job.exc_info or 'unknown error')
-
-    return out
+    except redis.exceptions.RedisError as e:
+        return {
+            'job_id': job_id,
+            'status': 'unknown',
+            'progress': 0,
+            'stage': None,
+            'error': None,
+            'article_id': None,
+            'transient_error': str(e),
+        }
 
 
 @app.get("/articles/{article_id}")

@@ -595,52 +595,64 @@ The final output should read as a coherent, deeply researched article assembled 
 # Load
 # ----------------------------------------------------------------------
 
-def load_bucket_images(conn, max_per_bucket=8):
+def load_bucket_images(conn, doc_ids=None, max_per_bucket=8):
     """
     Returns {bucket: [{url, alt, section_heading}, ...]}.
-
-    Images attach to sections; sections map to buckets via the atoms
-    in that section. Filters out obvious chrome. Caps per bucket.
+    Scoped to doc_ids when provided.
     """
-    rows = conn.execute("""
-      SELECT i.url, i.alt, i.section_id, s.heading AS section_heading
-      FROM images i
-      JOIN sections s ON s.section_id = i.section_id
-      WHERE i.section_id IS NOT NULL
-        AND i.alt IS NOT NULL
-        AND length(trim(i.alt)) >= 5
-        AND i.url NOT LIKE '%avatar%'
-        AND i.url NOT LIKE '%icon%'
-        AND i.url NOT LIKE '%badge%'
-        AND i.url NOT LIKE '%logo%'
-        AND i.url NOT LIKE '%favicon%'
-    """).fetchall()
+    if doc_ids is not None and not doc_ids:
+        return {}
 
-    sec_role = {}
-    for r in conn.execute("""
-      SELECT DISTINCT a.section_id, b.bucket
-      FROM atoms a
-      JOIN atom_buckets b ON b.atom_id = a.atom_id
-      WHERE a.section_id IS NOT NULL
-    """):
-        sec_role[r['section_id']] = r['bucket']
+    if doc_ids is not None:
+        rows = conn.execute(f"""
+           SELECT DISTINCT b.bucket, i.url, i.alt, i.section_id,
+               s.heading AS section_heading
+          FROM images i
+          JOIN sections s ON s.section_id = i.section_id
+           JOIN atoms a ON a.doc_id = i.doc_id AND a.section_id = i.section_id
+           JOIN atom_buckets b ON b.atom_id = a.atom_id
+          WHERE i.doc_id IN ({','.join(['%s'] * len(doc_ids))})
+            AND i.section_id IS NOT NULL
+            AND i.alt IS NOT NULL
+            AND length(trim(i.alt)) >= 5
+            AND i.url NOT LIKE '%%avatar%%'
+            AND i.url NOT LIKE '%%icon%%'
+            AND i.url NOT LIKE '%%badge%%'
+            AND i.url NOT LIKE '%%logo%%'
+            AND i.url NOT LIKE '%%favicon%%'
+                    ORDER BY b.bucket, s.heading, i.url
+        """, tuple(doc_ids)).fetchall()
+    else:
+        rows = conn.execute("""
+                    SELECT DISTINCT b.bucket, i.url, i.alt, i.section_id,
+                                 s.heading AS section_heading
+          FROM images i
+          JOIN sections s ON s.section_id = i.section_id
+                    JOIN atoms a ON a.doc_id = i.doc_id AND a.section_id = i.section_id
+                    JOIN atom_buckets b ON b.atom_id = a.atom_id
+          WHERE i.section_id IS NOT NULL
+            AND i.alt IS NOT NULL
+            AND length(trim(i.alt)) >= 5
+            AND i.url NOT LIKE '%avatar%'
+            AND i.url NOT LIKE '%icon%'
+            AND i.url NOT LIKE '%badge%'
+            AND i.url NOT LIKE '%logo%'
+            AND i.url NOT LIKE '%favicon%'
+          ORDER BY b.bucket, s.heading, i.url
+        """).fetchall()
 
-    by_bucket = {}
-    for r in rows:
-        bucket = sec_role.get(r['section_id'])
-        if not bucket:
+    images = {}
+    for row in rows:
+        bucket = row['bucket']
+        bucket_images = images.setdefault(bucket, [])
+        if len(bucket_images) >= max_per_bucket:
             continue
-        by_bucket.setdefault(bucket, []).append({
-            'url':             r['url'],
-            'alt':             r['alt'].strip(),
-            'section_heading': r['section_heading'] or '',
+        bucket_images.append({
+            'url': row['url'],
+            'alt': row['alt'],
+            'section_heading': row['section_heading'] or '',
         })
-
-    for bucket in by_bucket:
-        by_bucket[bucket].sort(key=lambda x: -len(x['alt']))
-        by_bucket[bucket] = by_bucket[bucket][:max_per_bucket]
-
-    return by_bucket
+    return images
 
 
 def utcnow():
@@ -651,15 +663,28 @@ def sha16(s):
     return hashlib.sha256(s.encode('utf-8')).hexdigest()[:16]
 
 
-def load_bucketed_atoms(conn):
-    """Returns {bucket: [{atom_id, text, section_heading}, ...]}."""
-    rows = conn.execute("""
-      SELECT b.bucket, a.atom_id, a.text, s.heading AS section_heading
-      FROM atom_buckets b
-      JOIN atoms a ON a.atom_id = b.atom_id
-      LEFT JOIN sections s ON s.section_id = a.section_id
-      ORDER BY b.bucket, s.heading, a.order_index
-    """).fetchall()
+def load_bucketed_atoms(conn, doc_ids=None):
+    """Returns {bucket: [{atom_id, text, section_heading}, ...]}, scoped to doc_ids if given."""
+    if doc_ids is not None and not doc_ids:
+        return {}
+
+    if doc_ids is not None:
+        rows = conn.execute(f"""
+          SELECT b.bucket, a.atom_id, a.text, s.heading AS section_heading
+          FROM atom_buckets b
+          JOIN atoms a ON a.atom_id = b.atom_id
+          LEFT JOIN sections s ON s.section_id = a.section_id
+          WHERE a.doc_id IN ({','.join(['%s'] * len(doc_ids))})
+          ORDER BY b.bucket, s.heading, a.order_index
+        """, tuple(doc_ids)).fetchall()
+    else:
+        rows = conn.execute("""
+          SELECT b.bucket, a.atom_id, a.text, s.heading AS section_heading
+          FROM atom_buckets b
+          JOIN atoms a ON a.atom_id = b.atom_id
+          LEFT JOIN sections s ON s.section_id = a.section_id
+          ORDER BY b.bucket, s.heading, a.order_index
+        """).fetchall()
 
     buckets = {}
     for r in rows:
@@ -671,15 +696,25 @@ def load_bucketed_atoms(conn):
     return buckets
 
 
-def infer_topic(conn):
-    """Return the most common non-boilerplate H1 title, or a fallback."""
+def infer_topic(conn, doc_ids=None):
     if TOPIC_OVERRIDE:
         return TOPIC_OVERRIDE
 
-    rows = conn.execute("""
-      SELECT title FROM documents
-      WHERE title IS NOT NULL AND length(trim(title)) > 2
-    """).fetchall()
+    if doc_ids is not None and not doc_ids:
+        return 'the subject described by the atoms below'
+
+    if doc_ids is not None:
+        rows = conn.execute(f"""
+          SELECT title FROM documents
+          WHERE doc_id IN ({','.join(['%s'] * len(doc_ids))})
+            AND title IS NOT NULL
+            AND length(trim(title)) > 2
+        """, tuple(doc_ids)).fetchall()
+    else:
+        rows = conn.execute("""
+          SELECT title FROM documents
+          WHERE title IS NOT NULL AND length(trim(title)) > 2
+        """).fetchall()
 
     titles = [r['title'].strip() for r in rows if r['title']]
     if not titles:
@@ -781,12 +816,10 @@ def save_article(conn, run_id, topic, markdown, atom_ids, usage):
 # ----------------------------------------------------------------------
 
 def run(topic: str | None = None,
+        doc_ids: list[str] | None = None,
         run_id: str | None = None,
         verbose: bool = True) -> dict | None:
-    """
-    Synthesize one article from the current atom_buckets.
-    Returns {'article_id', 'trace_id', 'chars', 'tokens', 'cost'} or None on early exit.
-    """
+    """Synthesize one article from the current job's atom_buckets."""
     if verbose:
         print(f"model       : {MODEL}")
         print(f"temperature : {TEMPERATURE}")
@@ -795,15 +828,15 @@ def run(topic: str | None = None,
 
     conn = connect()
 
-    buckets = load_bucketed_atoms(conn)
+    buckets = load_bucketed_atoms(conn, doc_ids=doc_ids)
     if not buckets:
         if verbose:
-            print("no atoms in atom_buckets. Run outline.py first.")
+            print("no atoms in atom_buckets for this job. Run outline.py first.")
         conn.close()
         return None
 
-    images_by_bucket = load_bucket_images(conn)
-    resolved_topic = topic or infer_topic(conn)
+    images_by_bucket = load_bucket_images(conn, doc_ids=doc_ids)
+    resolved_topic = topic or infer_topic(conn, doc_ids=doc_ids)
 
     if verbose:
         print(f"topic       : {resolved_topic}")
