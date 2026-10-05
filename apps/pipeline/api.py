@@ -56,11 +56,13 @@ class JobRequest(BaseModel):
     user_id: str = 'anonymous'
     session_id: str | None = None
     surface: str = 'web'
-
+    intent: str = 'deep_dive'
 
 class JobResponse(BaseModel):
     job_id: str
     status: str
+
+
 
 
 # ----------------------------------------------------------------------
@@ -118,12 +120,14 @@ def create_job(req: JobRequest):
         from pipeline import run_topic_job
         rq_job = job_queue.enqueue(
             run_topic_job,
+            kwargs={
+                'urls': req.urls,
+                'search_query': req.search_query,
+                'user_id': req.user_id,
+                'session_id': req.session_id,
+                'surface': req.surface,
+            },
             job_id=job_id,
-            urls=req.urls,
-            search_query=req.search_query,
-            user_id=req.user_id,
-            session_id=req.session_id,
-            surface=req.surface,
             job_timeout='30m',
             result_ttl=7 * 24 * 3600,
             failure_ttl=7 * 24 * 3600,

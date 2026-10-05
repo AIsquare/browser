@@ -1,18 +1,18 @@
 """
-Synthesize one article from bucketed atoms using an LLM.
+Synthesize one article from selected atoms using an LLM.
 
-Reads:  atom_buckets, atoms, sections, documents
+Reads:  <run_dir>/selected_atoms.json, optional manifests.json, documents
 Writes: draft.md + articles table row
 
-Universal template order. Empty sections skipped. Topic inferred from
-documents unless SYNTH_TOPIC is set. One LLM call per run.
+Empty sections are skipped. Topic inferred from documents unless
+SYNTH_TOPIC is set. One LLM call per run.
 
 Env:
   OPENAI_API_KEY     required
   OPENAI_MODEL       default gpt-4o-mini
   SYNTH_TOPIC        optional override; otherwise inferred from titles
   SYNTH_TEMPERATURE  default 0.2
-  SYNTH_DRY_RUN      "1" prints the prompt and exits
+  SYNTH_DRY_RUN      "1" reports prompt stats and exits without calling the LLM
 """
 from __future__ import annotations
 
@@ -663,37 +663,12 @@ def sha16(s):
     return hashlib.sha256(s.encode('utf-8')).hexdigest()[:16]
 
 
-def load_bucketed_atoms(conn, doc_ids=None):
-    """Returns {bucket: [{atom_id, text, section_heading}, ...]}, scoped to doc_ids if given."""
-    if doc_ids is not None and not doc_ids:
-        return {}
-
-    if doc_ids is not None:
-        rows = conn.execute(f"""
-          SELECT b.bucket, a.atom_id, a.text, s.heading AS section_heading
-          FROM atom_buckets b
-          JOIN atoms a ON a.atom_id = b.atom_id
-          LEFT JOIN sections s ON s.section_id = a.section_id
-          WHERE a.doc_id IN ({','.join(['%s'] * len(doc_ids))})
-          ORDER BY b.bucket, s.heading, a.order_index
-        """, tuple(doc_ids)).fetchall()
-    else:
-        rows = conn.execute("""
-          SELECT b.bucket, a.atom_id, a.text, s.heading AS section_heading
-          FROM atom_buckets b
-          JOIN atoms a ON a.atom_id = b.atom_id
-          LEFT JOIN sections s ON s.section_id = a.section_id
-          ORDER BY b.bucket, s.heading, a.order_index
-        """).fetchall()
-
-    buckets = {}
-    for r in rows:
-        buckets.setdefault(r['bucket'], []).append({
-            'atom_id':         r['atom_id'],
-            'text':            r['text'],
-            'section_heading': r['section_heading'] or '',
-        })
-    return buckets
+def load_selected_atoms(run_dir: Path) -> dict:
+    path = run_dir / 'selected_atoms.json'
+    if not path.exists():
+        raise FileNotFoundError(f"selected_atoms.json not found in {run_dir}")
+    with open(path, encoding='utf-8') as f:
+        return json.load(f)
 
 
 def infer_topic(conn, doc_ids=None):
@@ -731,28 +706,45 @@ def infer_topic(conn, doc_ids=None):
 # Prompt
 # ----------------------------------------------------------------------
 
-def build_user_prompt(topic, buckets, images_by_bucket):
+def build_user_prompt(topic: str, selected: dict, manifests: list[dict]) -> str:
+    intent = selected.get('intent', 'deep_dive')
+
     lines = [f"# Topic\n\n{topic}\n"]
+    lines.append(f"# Intent\n\n{intent}\n")
+
+    # Source manifest summary — so the LLM knows what each source is
+    if manifests:
+        lines.append("# Source manifest\n")
+        for m in manifests:
+            ident = m.get('identity', {})
+            contrib = m.get('contribution', {})
+            q = m.get('quality', {})
+            lines.append(
+                f"- {m['url']}\n"
+                f"    type={ident.get('source_type', '?')} "
+                f"role={contrib.get('role', '?')} "
+                f"angle={ident.get('angle', '?')} "
+                f"authority={q.get('authority', '?')} "
+                f"depth={q.get('depth', '?')}"
+            )
+        lines.append("")
+
     lines.append("# Sections and atoms\n")
 
-    for name in BUCKET_ORDER:
-        atoms = buckets.get(name, [])
-        images = images_by_bucket.get(name, [])
-        if not atoms and not images:
-            continue
-
-        lines.append(f"\n## {name}\n")
-
-        for a in atoms:
+    for section in selected.get('sections', []):
+        title = section['title']
+        marker = " [STANDALONE]" if section.get('standalone') else ""
+        lines.append(f"\n## {title}{marker}\n")
+        for a in section.get('atoms', []):
             lines.append(f"- [{a['atom_id']}] {a['text']}")
 
-        if images:
-            lines.append(f"\n### Available images for {name}\n")
-            for img in images:
-                lines.append(f"- ![{img['alt']}]({img['url']})")
-            lines.append("")
+    if selected.get('contextual'):
+        lines.append("\n## Background\n")
+        for c in selected['contextual']:
+            for a in c.get('atoms', []):
+                lines.append(f"- [{a['atom_id']}] {a['text']}")
 
-    return '\n'.join(lines)
+    return "\n".join(lines)
 
 
 # ----------------------------------------------------------------------
@@ -818,130 +810,132 @@ def save_article(conn, run_id, topic, markdown, atom_ids, usage):
 def run(topic: str | None = None,
         doc_ids: list[str] | None = None,
         run_id: str | None = None,
+        run_dir: Path | str | None = None,
         verbose: bool = True) -> dict | None:
-    """Synthesize one article from the current job's atom_buckets."""
+    """Synthesize one article from the run's selected atoms."""
+    if run_dir is None:
+        raise ValueError("run_dir is required")
+    run_dir = Path(run_dir)
+
     if verbose:
         print(f"model       : {MODEL}")
         print(f"temperature : {TEMPERATURE}")
-        print(f"dry run     : {DRY_RUN}")
         print()
 
     conn = connect()
+    try:
+        selected = load_selected_atoms(run_dir)
 
-    buckets = load_bucketed_atoms(conn, doc_ids=doc_ids)
-    if not buckets:
+        manifests_path = run_dir / 'manifests.json'
+        manifests = []
+        if manifests_path.exists():
+            with open(manifests_path, encoding='utf-8') as f:
+                manifests = json.load(f)
+
+        resolved_topic = topic or infer_topic(conn, doc_ids=doc_ids)
+        user_prompt = build_user_prompt(resolved_topic, selected, manifests)
+        total_atoms = selected['totals']['total_atoms']
+
         if verbose:
-            print("no atoms in atom_buckets for this job. Run outline.py first.")
-        conn.close()
-        return None
+            print(f"topic       : {resolved_topic}")
+            print(f"intent      : {selected.get('intent')}")
+            print(f"atoms       : {total_atoms}")
+            print(f"prompt chars: {len(user_prompt):,}")
 
-    images_by_bucket = load_bucket_images(conn, doc_ids=doc_ids)
-    resolved_topic = topic or infer_topic(conn, doc_ids=doc_ids)
+        if total_atoms == 0:
+            if verbose:
+                print("no selected atoms in this run. Run select_atoms.py first.")
+            return None
 
-    if verbose:
-        print(f"topic       : {resolved_topic}")
-        print()
-        print("bucket sizes:")
-        for name in BUCKET_ORDER:
-            n = len(buckets.get(name, []))
-            m = len(images_by_bucket.get(name, []))
-            print(f"  {name:12s} {n} atoms, {m} images")
+        if DRY_RUN:
+            return None
 
-    user_prompt = build_user_prompt(resolved_topic, buckets, images_by_bucket)
-    total_atoms = sum(len(v) for v in buckets.values())
-
-    if verbose:
-        print()
-        print(f"atoms fed to prompt : {total_atoms}")
-        print(f"user prompt chars   : {len(user_prompt)}")
-
-    if DRY_RUN:
         if verbose:
             print()
-            print("=== SYSTEM PROMPT ===")
-            print(SYSTEM_PROMPT)
-            print()
-            print("=== USER PROMPT (first 2000 chars) ===")
-            print(user_prompt[:2000])
-            print()
-            print("(dry run — no LLM call, no DB write)")
+            print(f"calling {MODEL} ...")
+
+        response = call_llm(SYSTEM_PROMPT, user_prompt)
+        if response is None:
+            raise RuntimeError("call_llm returned None (did DRY_RUN leak?)")
+
+        choice = response.choices[0] if response.choices else None
+        message = choice.message if choice else None
+
+        content = getattr(message, 'content', None) if message else None
+        if (not isinstance(content, str) or not content.strip()) and message is not None:
+            content = (
+                getattr(message, 'reasoning', None)
+                or getattr(message, 'reasoning_content', None)
+            )
+
+        if not isinstance(content, str) or not content.strip():
+            finish_reason = choice.finish_reason if choice else 'no choices returned'
+            Path('debug_last_response.json').write_text(
+                json.dumps(response.model_dump(), indent=2, default=str),
+                encoding='utf-8',
+                errors='replace',
+            )
+            raise RuntimeError(
+                f"{MODEL} returned no text content "
+                f"(finish_reason={finish_reason!r}); "
+                f"raw response written to debug_last_response.json"
+            )
+
+        markdown = clean_output(content)
+
+        usage_obj = getattr(response, 'usage', None)
+        usage = {
+            'prompt_tokens':     getattr(usage_obj, 'prompt_tokens', 0) if usage_obj else 0,
+            'completion_tokens': getattr(usage_obj, 'completion_tokens', 0) if usage_obj else 0,
+            'total_tokens':      getattr(usage_obj, 'total_tokens', 0) if usage_obj else 0,
+        }
+
+        atom_ids = [
+            atom['atom_id']
+            for section in selected.get('sections', [])
+            for atom in section.get('atoms', [])
+        ]
+        atom_ids.extend(
+            atom['atom_id']
+            for context in selected.get('contextual', [])
+            for atom in context.get('atoms', [])
+        )
+
+        if run_id is None:
+            run_id = sha16(f"synthesize-{utcnow()}")
+
+        conn.execute("""
+          INSERT INTO pipeline_runs (run_id, started_at, status, stages_json)
+          VALUES (%s, %s, 'completed', %s)
+          ON CONFLICT (run_id) DO NOTHING
+        """, (run_id, utcnow(), '["synthesize"]'))
+
+        article_id = save_article(
+            conn, run_id, resolved_topic, markdown, atom_ids, usage
+        )
+
+        trace_id = uuid.uuid4().hex[:16]
+        reasoning = (
+            getattr(message, 'reasoning_content', None)
+            or getattr(message, 'reasoning', None)
+        )
+        conn.execute("""
+          INSERT INTO synthesis_traces
+            (trace_id, article_id, run_id, topic_id, model,
+             system_prompt, user_prompt, raw_content, raw_reasoning,
+             finish_reason, prompt_tokens, completion_tokens, created_at)
+          VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+        """, (
+            trace_id, article_id, run_id, None, MODEL,
+            SYSTEM_PROMPT, user_prompt, content, reasoning,
+            getattr(choice, 'finish_reason', None),
+            usage['prompt_tokens'], usage['completion_tokens'],
+            utcnow(),
+        ))
+
+        conn.commit()
+    finally:
         conn.close()
-        return None
-
-    if verbose:
-        print()
-        print(f"calling {MODEL} ...")
-
-    response = call_llm(SYSTEM_PROMPT, user_prompt)
-    if response is None:
-        raise RuntimeError("call_llm returned None (did DRY_RUN leak?)")
-
-    choice = response.choices[0] if response.choices else None
-    message = choice.message if choice else None
-
-    content = getattr(message, 'content', None) if message else None
-    if (not isinstance(content, str) or not content.strip()) and message is not None:
-        content = (
-            getattr(message, 'reasoning', None)
-            or getattr(message, 'reasoning_content', None)
-        )
-
-    if not isinstance(content, str) or not content.strip():
-        finish_reason = choice.finish_reason if choice else 'no choices returned'
-        Path('debug_last_response.json').write_text(
-            json.dumps(response.model_dump(), indent=2, default=str),
-            encoding='utf-8',
-            errors='replace',
-        )
-        raise RuntimeError(
-            f"{MODEL} returned no text content "
-            f"(finish_reason={finish_reason!r}); "
-            f"raw response written to debug_last_response.json"
-        )
-
-    markdown = clean_output(content)
-
-    usage_obj = getattr(response, 'usage', None)
-    usage = {
-        'prompt_tokens':     getattr(usage_obj, 'prompt_tokens', 0) if usage_obj else 0,
-        'completion_tokens': getattr(usage_obj, 'completion_tokens', 0) if usage_obj else 0,
-        'total_tokens':      getattr(usage_obj, 'total_tokens', 0) if usage_obj else 0,
-    }
-
-    atom_ids = [a['atom_id'] for v in buckets.values() for a in v]
-
-    if run_id is None:
-        run_id = sha16(f"synthesize-{utcnow()}")
-
-    conn.execute("""
-      INSERT INTO pipeline_runs (run_id, started_at, status, stages_json)
-      VALUES (%s, %s, 'completed', %s)
-      ON CONFLICT (run_id) DO NOTHING
-    """, (run_id, utcnow(), '["synthesize"]'))
-
-    article_id = save_article(conn, run_id, resolved_topic, markdown, atom_ids, usage)
-
-    trace_id = uuid.uuid4().hex[:16]
-    reasoning = (
-        getattr(message, 'reasoning_content', None)
-        or getattr(message, 'reasoning', None)
-    )
-    conn.execute("""
-      INSERT INTO synthesis_traces
-        (trace_id, article_id, run_id, topic_id, model,
-         system_prompt, user_prompt, raw_content, raw_reasoning,
-         finish_reason, prompt_tokens, completion_tokens, created_at)
-      VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
-    """, (
-        trace_id, article_id, run_id, None, MODEL,
-        SYSTEM_PROMPT, user_prompt, content, reasoning,
-        getattr(choice, 'finish_reason', None),
-        usage['prompt_tokens'], usage['completion_tokens'],
-        utcnow(),
-    ))
-
-    conn.commit()
-    conn.close()
 
     with open(DRAFT_PATH, 'w', encoding='utf-8', errors='replace') as f:
         f.write(markdown)
@@ -971,12 +965,14 @@ def run(topic: str | None = None,
 
 def main():
     ap = argparse.ArgumentParser()
+    ap.add_argument('--run-dir', required=True,
+                    help='directory containing selected_atoms.json')
     ap.add_argument('--topic', default=None,
                     help='override topic; otherwise inferred from documents')
     ap.add_argument('--run-id', default=None,
                     help='pipeline_runs.run_id to attribute this run to')
     args = ap.parse_args()
-    run(topic=args.topic, run_id=args.run_id)
+    run(topic=args.topic, run_id=args.run_id, run_dir=args.run_dir)
 
 
 if __name__ == '__main__':

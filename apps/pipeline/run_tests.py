@@ -41,7 +41,10 @@ STAGES = [
     ('crawl',      'dom_extract.py',    None,                 600),
     ('parse',      'ast_ingest_v2.py',  None,                 300),
     ('load',       'ingest.py',         None,                 300),
+    ('manifest',   'doc_manifest.py',   None,                 600),
     ('outline',    'outline.py',        None,                 600),
+    ('select_sources', 'select_sources.py', None,              600),
+    ('select_atoms', 'select_atoms.py', None,                   300),
     ('synthesize', 'synthesize.py',     None,                1200),
 ]
 
@@ -166,8 +169,19 @@ def run_topic(topic_dir: Path, results_root: Path, force: bool) -> dict:
     topic_start = time.monotonic()
 
     for name, script, extra, timeout in STAGES:
-        # Special case for the crawler — pass the urls file
-        args = ['--urls', 'urls.txt'] if script == 'dom_extract.py' else extra
+        if script == 'dom_extract.py':
+            args = ['--urls', 'urls.txt']
+        elif script in ('doc_manifest.py', 'select_sources.py'):
+            args = [
+                '--run-dir', '.',
+                '--topic', slug.replace('-', ' '),
+            ]
+            if script == 'select_sources.py':
+                args.extend(['--intent', 'deep_dive'])
+        elif script in ('select_atoms.py', 'synthesize.py'):
+            args = ['--run-dir', '.']
+        else:
+            args = extra
 
         print(f"  [{name:11s}] running ...", end='', flush=True)
         r = run_stage(name, script, args, out_dir, db_path, timeout)
