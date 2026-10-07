@@ -216,7 +216,7 @@ export default function App() {
       const res = await fetch('/api/search', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ query: query.trim(), limit: 20, searxngUrl }),
+        body: JSON.stringify({ query: query.trim(), limit: 20 }),
       });
 
       if (!res.ok) {
