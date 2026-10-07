@@ -1,0 +1,85 @@
+services:
+  api:
+    build:
+      context: ./apps/pipeline
+      dockerfile: Dockerfile
+    env_file: ./apps/pipeline/.env
+    command: python -m uvicorn api:app --host 0.0.0.0 --port 8000
+    ports:
+      - "8000:8000"
+    restart: unless-stopped
+    networks: [stack]
+
+  worker:
+    build:
+      context: ./apps/pipeline
+      dockerfile: Dockerfile
+    env_file: ./apps/pipeline/.env
+    command: python worker.py
+    shm_size: '1gb'
+    init: true
+    restart: unless-stopped
+    depends_on:
+      - api
+    networks: [stack]
+
+  web:
+    build:
+      context: ./apps/web
+      dockerfile: Dockerfile
+    env_file: ./apps/web/.env
+    environment:
+      - NODE_ENV=production
+      - PIPELINE_API_URL=http://api:8000
+      - SEARXNG_URL=http://searxng:8080/search
+    ports:
+      - "3000:3000"
+    restart: unless-stopped
+    depends_on:
+      - api
+      - searxng
+    networks: [stack]
+
+  searxng:
+    image: searxng/searxng:latest
+    volumes:
+      - ./infra/searxng:/etc/searxng:rw
+    ports:
+      - "8080:8080"
+    environment:
+      - SEARXNG_BASE_URL=http://localhost:8080/
+      - SEARXNG_REDIS_URL=redis://redis:6379/0
+    restart: unless-stopped
+    depends_on:
+      - redis
+    networks: [stack]
+
+  redis:
+    image: valkey/valkey:8-alpine
+    volumes:
+      - redis-data:/data
+    restart: unless-stopped
+    networks: [stack]
+
+  caddy:
+    image: caddy:2-alpine
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./infra/Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy-data:/data
+      - caddy-config:/config
+    restart: unless-stopped
+    depends_on:
+      - web
+    networks: [stack]
+
+volumes:
+  redis-data:
+  caddy-data:
+  caddy-config:
+
+networks:
+  stack:
+    driver: bridge
