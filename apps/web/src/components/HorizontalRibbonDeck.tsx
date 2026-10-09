@@ -1,12 +1,13 @@
 import React, { useRef, useState, useEffect } from 'react';
 import { motion } from 'motion/react';
 import { 
-  Sparkles, 
   ChevronLeft, 
   ChevronRight, 
-  BookOpen, 
-  ArrowRight,
-  Layers
+  ExternalLink,
+  Layers,
+  Lock,
+  Globe,
+  FileText
 } from 'lucide-react';
 import { ResearchCard } from '../types';
 
@@ -27,11 +28,11 @@ export function HorizontalRibbonDeck({
   const [scrollX, setScrollX] = useState<number>(0);
   const lastSoundTimeRef = useRef<number>(0);
 
-  const CARD_WIDTH = 290;
-  const CARD_GAP = 20;
+  const CARD_WIDTH = 440;
+  const CARD_GAP = 24;
   const STEP = CARD_WIDTH + CARD_GAP;
 
-  const maxScroll = Math.max(0, (cards.length - 2.5) * STEP);
+  const maxScroll = Math.max(0, (cards.length - 2) * STEP);
 
   // Translate wheel scroll
   const handleWheel = (e: React.WheelEvent) => {
@@ -84,22 +85,21 @@ export function HorizontalRibbonDeck({
       aria-label="Horizontal Ribbon Deck Carousel"
     >
       {/* Background ambient lighting */}
-      <div className="absolute top-1/2 left-1/3 -translate-y-1/2 w-[600px] h-[300px] bg-indigo-50/70 rounded-full blur-3xl pointer-events-none" />
+      <div className="absolute top-1/2 left-1/3 -translate-y-1/2 w-[600px] h-[300px] bg-slate-100 rounded-full blur-3xl pointer-events-none" />
 
       {/* Top Controls & Filmstrip header */}
-      <div className="z-10 flex items-center justify-between w-full max-w-6xl mx-auto mb-2 text-xs text-slate-500">
+      <div className="z-10 flex items-center justify-between w-full max-w-7xl mx-auto mb-2 text-xs text-slate-500">
         <div className="flex items-center gap-2">
-          <span className="w-2 h-2 rounded-full bg-indigo-500 animate-pulse" />
-          <span className="font-semibold text-slate-800">Horizontal Ribbon Deck</span>
-          <span className="text-slate-300">•</span>
-          <span className="text-slate-500">Filmstrip dealing cards edge-to-edge</span>
+          <span className="font-semibold text-slate-900">Live Webpage Snapshot Deck</span>
+          <span className="text-slate-300">·</span>
+          <span className="text-slate-500">Readable content snapshots dealing edge-to-edge</span>
         </div>
 
         <div className="flex items-center gap-3">
           <span className="text-[11px] text-slate-400 hidden sm:inline">
-            Scroll wheel or drag sideways like dealing cards
+            Scroll or drag to navigate snapshots
           </span>
-          <div className="flex items-center gap-1 bg-white border border-slate-200 rounded-lg p-0.5 shadow-sm">
+          <div className="flex items-center gap-1 bg-white border border-slate-200 rounded-lg p-0.5 shadow-xs">
             <button
               onClick={() => scrollByStep('left')}
               disabled={scrollX <= 0}
@@ -127,15 +127,15 @@ export function HorizontalRibbonDeck({
         <div className="absolute right-0 top-0 bottom-0 w-12 bg-gradient-to-l from-slate-50 to-transparent z-20 pointer-events-none" />
 
         {cards.length === 0 ? (
-          <div className="mx-auto text-center p-8 bg-white border border-slate-200 rounded-2xl shadow-sm text-slate-500 max-w-md">
+          <div className="mx-auto text-center p-8 bg-white border border-slate-200 rounded-2xl shadow-xs text-slate-500 max-w-md">
             <Layers className="w-8 h-8 mx-auto text-slate-400 mb-2" />
-            <h3 className="font-semibold text-slate-800 text-sm">All ribbon cards triaged</h3>
-            <p className="text-xs text-slate-400 mt-1">Use Re-deal in the top-left to restart.</p>
+            <h3 className="font-semibold text-slate-800 text-sm">All cards triaged</h3>
+            <p className="text-xs text-slate-400 mt-1">Search new topics or re-deal in the left sidebar.</p>
           </div>
         ) : (
           <motion.div
             ref={ribbonRef}
-            className="flex items-stretch gap-5 px-6 cursor-grab active:cursor-grabbing"
+            className="flex items-stretch gap-6 px-6 cursor-grab active:cursor-grabbing"
             animate={{ x: -scrollX }}
             transition={{
               type: 'spring',
@@ -143,97 +143,122 @@ export function HorizontalRibbonDeck({
               damping: 30,
             }}
           >
-            {cards.map((card) => (
-              <motion.div
-                key={card.id}
-                whileHover={{ y: -6, scale: 1.015 }}
-                transition={{ type: 'spring', stiffness: 400, damping: 25 }}
-                onClick={() => {
-                  onSelectCard(card);
-                  onSoundTrigger?.('snap');
-                }}
-                onMouseEnter={() => onHoverCard?.(card)}
-                onMouseLeave={() => onHoverCard?.(null)}
-                className="w-[280px] sm:w-[300px] shrink-0 flex flex-col justify-between bg-white border border-slate-200 hover:border-indigo-300 rounded-2xl p-4 shadow-md hover:shadow-xl hover:shadow-indigo-100/50 transition-all cursor-pointer group"
-                role="listitem"
-                tabIndex={0}
-                onKeyDown={(e) => {
-                  if (e.key === 'Enter' || e.key === ' ') {
-                    e.preventDefault();
+            {cards.map((card) => {
+              const displayUrl = card.rawUrl || `https://${card.domain}`;
+              return (
+                <motion.div
+                  key={card.id}
+                  whileHover={{ y: -6 }}
+                  transition={{ type: 'spring', stiffness: 400, damping: 25 }}
+                  onClick={() => {
                     onSelectCard(card);
-                  }
-                }}
-              >
-                {/* Card top: Domain Icon & Match Score */}
-                <div className="flex items-center justify-between mb-3">
-                  <div className="flex items-center gap-2">
-                    <div className="w-7 h-7 rounded-lg bg-slate-100 border border-slate-200 flex items-center justify-center text-xs font-bold text-indigo-700">
-                      {card.domainFavicon.slice(0, 3)}
+                    onSoundTrigger?.('snap');
+                  }}
+                  onMouseEnter={() => onHoverCard?.(card)}
+                  onMouseLeave={() => onHoverCard?.(null)}
+                  className="w-[380px] sm:w-[440px] md:w-[460px] shrink-0 flex flex-col justify-between bg-white border border-slate-200 hover:border-slate-400 rounded-2xl shadow-sm hover:shadow-xl transition-all cursor-pointer group overflow-hidden"
+                  role="listitem"
+                  tabIndex={0}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter' || e.key === ' ') {
+                      e.preventDefault();
+                      onSelectCard(card);
+                    }
+                  }}
+                >
+                  {/* Browser Window Chrome Top Bar */}
+                  <div className="px-4 py-2.5 bg-slate-100 border-b border-slate-200 flex items-center justify-between gap-2 text-xs">
+                    <div className="flex items-center gap-1.5 shrink-0">
+                      <span className="w-2.5 h-2.5 rounded-full bg-slate-300 group-hover:bg-rose-400 transition-colors" />
+                      <span className="w-2.5 h-2.5 rounded-full bg-slate-300 group-hover:bg-amber-400 transition-colors" />
+                      <span className="w-2.5 h-2.5 rounded-full bg-slate-300 group-hover:bg-emerald-400 transition-colors" />
                     </div>
-                    <div className="flex flex-col">
-                      <span className="text-xs text-slate-800 font-semibold truncate max-w-[130px]">
+
+                    {/* Realistic URL Address Bar */}
+                    <div className="flex-1 max-w-[280px] mx-2 px-2.5 py-1 bg-white border border-slate-200 rounded-md text-[11px] font-mono text-slate-700 flex items-center gap-1.5 truncate shadow-2xs">
+                      <Lock className="w-3 h-3 text-emerald-600 shrink-0" />
+                      <span className="truncate">{displayUrl}</span>
+                    </div>
+
+                    <span className="text-[11px] font-medium text-slate-500 font-mono shrink-0">
+                      {card.matchScore}% match
+                    </span>
+                  </div>
+
+                  {/* Webpage Content Snapshot Body */}
+                  <div className="p-5 flex-1 flex flex-col justify-between space-y-4">
+                    {/* Header: Source metadata */}
+                    <div className="space-y-2">
+                      <div className="flex items-center gap-2 text-xs text-slate-500">
+                        <Globe className="w-3.5 h-3.5 text-slate-400" />
+                        <span className="font-semibold text-slate-800">{card.institution || card.domain}</span>
+                        <span aria-hidden="true">·</span>
+                        <span>{card.category}</span>
+                        <span aria-hidden="true">·</span>
+                        <span>{card.readTime}</span>
+                      </div>
+
+                      {/* Webpage Headline */}
+                      <h3 className="text-base sm:text-lg font-bold text-slate-900 tracking-tight leading-snug group-hover:text-indigo-600 transition-colors line-clamp-2">
+                        {card.title}
+                      </h3>
+
+                      <p className="text-xs text-slate-500 font-medium">
+                        By {card.author} · {card.publishedDate}
+                      </p>
+                    </div>
+
+                    {/* Webpage Summary "As-Is" */}
+                    <p className="text-xs sm:text-sm text-slate-700 leading-relaxed line-clamp-3">
+                      {card.summary}
+                    </p>
+
+                    {/* Key Findings Preview — readable without clicking! */}
+                    {card.keyFindings && card.keyFindings.length > 0 && (
+                      <div className="p-3 bg-slate-50 border border-slate-200/90 rounded-xl space-y-1.5">
+                        <div className="text-[10px] font-bold uppercase tracking-wider text-slate-500 flex items-center gap-1.5">
+                          <FileText className="w-3 h-3 text-slate-500" />
+                          <span>Key Extracted Findings & Data</span>
+                        </div>
+                        <ul className="space-y-1 text-xs text-slate-700">
+                          {card.keyFindings.slice(0, 2).map((finding, idx) => (
+                            <li key={idx} className="flex items-start gap-1.5 line-clamp-2 leading-relaxed">
+                              <span className="text-slate-400 font-mono text-[10px] mt-0.5">•</span>
+                              <span>{finding}</span>
+                            </li>
+                          ))}
+                        </ul>
+                      </div>
+                    )}
+
+                    {/* Action Bar at Bottom of Webpage */}
+                    <div className="pt-3 border-t border-slate-100 flex items-center justify-between text-xs">
+                      <span className="text-[11px] text-slate-400 font-mono truncate max-w-[200px]">
                         {card.domain}
                       </span>
-                      <span className="text-[10px] text-slate-400 font-mono">
-                        {card.readTime}
+                      <span className="text-slate-900 group-hover:text-indigo-600 font-semibold flex items-center gap-1.5 transition-colors">
+                        <span>Open Live Page As-Is</span>
+                        <ExternalLink className="w-3.5 h-3.5" />
                       </span>
                     </div>
                   </div>
-
-                  <span className="px-2.5 py-0.5 rounded-full text-xs font-semibold bg-emerald-50 text-emerald-700 border border-emerald-200 flex items-center gap-1">
-                    <Sparkles className="w-3 h-3 text-emerald-600" />
-                    {card.matchScore}%
-                  </span>
-                </div>
-
-                {/* Clean Summary Thumbnail */}
-                <div className="relative rounded-xl overflow-hidden aspect-[16/10] mb-3 bg-slate-100 border border-slate-200">
-                  <img
-                    src={card.thumbnailUrl}
-                    alt={card.title}
-                    referrerPolicy="no-referrer"
-                    className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300"
-                  />
-                  <span className="absolute bottom-2 left-2 px-2 py-0.5 rounded text-[10px] font-mono bg-white/90 text-slate-700 border border-slate-200 shadow-sm backdrop-blur-sm">
-                    {card.category}
-                  </span>
-                </div>
-
-                {/* Title & Excerpt */}
-                <div className="flex-1 flex flex-col justify-start">
-                  <h3 className="text-sm font-bold text-slate-900 tracking-tight leading-snug line-clamp-2 group-hover:text-indigo-600 transition-colors">
-                    {card.title}
-                  </h3>
-                  <p className="mt-1.5 text-xs text-slate-600 line-clamp-2 leading-relaxed">
-                    {card.summary}
-                  </p>
-                </div>
-
-                {/* Bottom Action Footer */}
-                <div className="mt-4 pt-3 border-t border-slate-100 flex items-center justify-between text-xs">
-                  <span className="text-[11px] text-slate-400 truncate max-w-[150px]">
-                    {card.author}
-                  </span>
-                  <span className="text-indigo-600 font-medium flex items-center gap-1 group-hover:translate-x-0.5 transition-transform">
-                    Pop Drawer <ArrowRight className="w-3 h-3" />
-                  </span>
-                </div>
-              </motion.div>
-            ))}
+                </motion.div>
+              );
+            })}
           </motion.div>
         )}
       </div>
 
       {/* Bottom Dealing Progress & Summary */}
-      <div className="z-10 flex items-center justify-between w-full max-w-6xl mx-auto text-xs text-slate-400">
+      <div className="z-10 flex items-center justify-between w-full max-w-7xl mx-auto text-xs text-slate-400">
         <span className="font-mono text-[11px] text-slate-500">
-          Dealing {cards.length} cards along filmstrip
+          Showing {cards.length} live webpage snapshots
         </span>
         <div className="flex items-center gap-2">
-          <span className="text-[11px] font-mono text-slate-400">Filmstrip Position</span>
+          <span className="text-[11px] font-mono text-slate-400">Deck Position</span>
           <div className="w-32 h-1.5 bg-slate-200 rounded-full overflow-hidden">
             <div
-              className="h-full bg-indigo-500 transition-all duration-150"
+              className="h-full bg-slate-900 transition-all duration-150"
               style={{ width: `${Math.min(100, Math.max(5, (scrollX / (maxScroll || 1)) * 100))}%` }}
             />
           </div>

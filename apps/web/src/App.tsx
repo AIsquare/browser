@@ -234,13 +234,16 @@ export default function App() {
         setSelectedCategory('All');
         setSearxStatus({ connected: data.searxngConnected, count: data.cards.length, error: data.error });
         triggerSensory('snap');
-        showToast(`Loaded ${data.cards.length} results from SearXNG metasearch`, 'keep');
+        showToast(`Loaded ${data.cards.length} research papers for "${query.trim()}"`, 'keep');
+        return data.cards.length;
       } else {
         setSearxStatus({ connected: false, count: 0, error: data.error || 'No results found' });
+        return 0;
       }
     } catch (err: unknown) {
       const errMsg = err instanceof Error ? err.message : String(err);
       setSearxStatus({ connected: false, count: 0, error: errMsg });
+      throw err;
     } finally {
       setIsSearchingSearX(false);
     }

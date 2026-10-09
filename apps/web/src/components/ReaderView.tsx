@@ -39,7 +39,7 @@ export function ReaderView({
   onClose,
   onNavigateAdjacent
 }: ReaderViewProps) {
-  const [activeTab, setActiveTab] = useState<'reader' | 'interactive'>('reader');
+  const [activeTab, setActiveTab] = useState<'interactive' | 'reader'>('interactive');
   const [copied, setCopied] = useState(false);
   const [iframeKey, setIframeKey] = useState(0);
   const [renderMode, setRenderMode] = useState<'direct' | 'proxy'>('direct');
@@ -185,26 +185,26 @@ export function ReaderView({
       <div className="px-6 py-2 bg-slate-50/50 border-b border-slate-200 flex items-center justify-between text-xs">
         <div className="flex items-center gap-2">
           <button
-            onClick={() => setActiveTab('reader')}
-            className={`flex items-center gap-1.5 py-1 px-3 rounded-lg font-medium transition-all ${
-              activeTab === 'reader'
-                ? 'bg-white text-indigo-600 shadow-sm border border-slate-200'
-                : 'text-slate-600 hover:text-slate-900'
-            }`}
-          >
-            <BookOpen className="w-3.5 h-3.5" />
-            <span>Structured Synthesis</span>
-          </button>
-          <button
             onClick={() => setActiveTab('interactive')}
             className={`flex items-center gap-1.5 py-1 px-3 rounded-lg font-medium transition-all ${
               activeTab === 'interactive'
-                ? 'bg-white text-indigo-600 shadow-sm border border-slate-200'
+                ? 'bg-white text-slate-900 shadow-xs border border-slate-200 font-semibold'
                 : 'text-slate-600 hover:text-slate-900'
             }`}
           >
             <Globe className="w-3.5 h-3.5" />
-            <span>Live Page (As-Is)</span>
+            <span>Live Webpage (As-Is)</span>
+          </button>
+          <button
+            onClick={() => setActiveTab('reader')}
+            className={`flex items-center gap-1.5 py-1 px-3 rounded-lg font-medium transition-all ${
+              activeTab === 'reader'
+                ? 'bg-white text-slate-900 shadow-xs border border-slate-200 font-semibold'
+                : 'text-slate-600 hover:text-slate-900'
+            }`}
+          >
+            <BookOpen className="w-3.5 h-3.5" />
+            <span>Original Article Text</span>
           </button>
         </div>
 

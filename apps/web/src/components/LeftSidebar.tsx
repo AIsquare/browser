@@ -88,7 +88,7 @@ export function LeftSidebar({
     {
       id: 'welcome',
       sender: 'assistant',
-      text: 'Welcome to Research Deck. Filter active papers in real-time or click "SearXNG" to crawl live web pages with concurrent headless rendering.',
+      text: 'Welcome to Research Deck. Enter any topic, paper title, or author to search across live research repositories and view as-is webpage snapshots.',
       timestamp: 'Just now',
     }
   ]);
@@ -104,13 +104,9 @@ export function LeftSidebar({
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [messages]);
 
-  const handleSendMessage = (textToSend?: string) => {
-    const q = (textToSend !== undefined ? textToSend : inputVal).trim();
+  const handleExecuteSearch = async (customQuery?: string) => {
+    const q = (customQuery !== undefined ? customQuery : inputVal).trim();
     if (!q) return;
-
-    // Set search query in app state
-    onSearchChange(q);
-    setInputVal('');
 
     const userMsg: Message = {
       id: String(Date.now()),
@@ -119,38 +115,56 @@ export function LeftSidebar({
       timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
     };
 
-    const assistantMsg: Message = {
-      id: String(Date.now() + 1),
+    const pendingMsgId = String(Date.now() + 1);
+    const pendingMsg: Message = {
+      id: pendingMsgId,
       sender: 'assistant',
-      text: `Filtered active deck for "${q}". Showing matching cards in the turntable deck.`,
+      text: `Searching research repositories, academic preprints, and open web for "${q}"...`,
       timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
     };
 
-    setMessages((prev) => [...prev, userMsg, assistantMsg]);
-  };
-
-  const handleExecuteSearXNGSearch = async (customQuery?: string) => {
-    const q = (customQuery !== undefined ? customQuery : inputVal).trim();
-    if (!q || !onSearXNGSearch) return;
-
-    const userMsg: Message = {
-      id: String(Date.now()),
-      sender: 'user',
-      text: `Crawling SearXNG for: "${q}"`,
-      timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
-    };
-    setMessages((prev) => [...prev, userMsg]);
+    setMessages((prev) => [...prev, userMsg, pendingMsg]);
     setInputVal('');
 
-    await onSearXNGSearch(q);
-
-    const assistantMsg: Message = {
-      id: String(Date.now() + 1),
-      sender: 'assistant',
-      text: `SearXNG metasearch completed. Dealt fresh cards into the 3D deck. Click any card to inspect or read the live page as-is.`,
-      timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
-    };
-    setMessages((prev) => [...prev, assistantMsg]);
+    try {
+      if (onSearXNGSearch) {
+        await onSearXNGSearch(q);
+        setMessages((prev) =>
+          prev.map((m) =>
+            m.id === pendingMsgId
+              ? {
+                  ...m,
+                  text: `Discovered research papers matching "${q}". Dealt fresh webpage snapshot cards directly into your deck.`,
+                }
+              : m
+          )
+        );
+      } else {
+        onSearchChange(q);
+        setMessages((prev) =>
+          prev.map((m) =>
+            m.id === pendingMsgId
+              ? {
+                  ...m,
+                  text: `Filtered active cards for "${q}". Showing matching documents.`,
+                }
+              : m
+          )
+        );
+      }
+    } catch (err: unknown) {
+      const errMsg = err instanceof Error ? err.message : String(err);
+      setMessages((prev) =>
+        prev.map((m) =>
+          m.id === pendingMsgId
+            ? {
+                ...m,
+                text: `Search notice: ${errMsg}. Displaying available research cards.`,
+              }
+            : m
+        )
+      );
+    }
   };
 
   const handlePingSearxng = async () => {
@@ -201,7 +215,7 @@ export function LeftSidebar({
     if (prompt === 'All') {
       handleResetSearch();
     } else {
-      handleSendMessage(prompt);
+      handleExecuteSearch(prompt);
     }
   };
 
@@ -380,7 +394,7 @@ export function LeftSidebar({
         <form
           onSubmit={(e) => {
             e.preventDefault();
-            handleSendMessage();
+            handleExecuteSearch();
           }}
           className="relative flex items-center"
         >
@@ -392,11 +406,11 @@ export function LeftSidebar({
             value={inputVal}
             onChange={(e) => {
               setInputVal(e.target.value);
-              // Live update filter as user types!
+              // Live update filter as user types
               onSearchChange(e.target.value);
             }}
             placeholder="Search papers, topics, authors..."
-            className="w-full pl-9 pr-16 py-2.5 bg-slate-50 hover:bg-slate-100/70 focus:bg-white border border-slate-200 focus:border-indigo-500 rounded-xl text-xs text-slate-800 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-indigo-500/20 transition-all shadow-xs"
+            className="w-full pl-9 pr-28 py-2.5 bg-slate-50 hover:bg-slate-100/70 focus:bg-white border border-slate-200 focus:border-slate-800 rounded-xl text-xs text-slate-800 placeholder-slate-400 focus:outline-none focus:ring-1 focus:ring-slate-800 transition-all shadow-xs"
           />
 
           <div className="absolute right-1.5 flex items-center gap-1">
@@ -404,43 +418,39 @@ export function LeftSidebar({
               <button
                 type="button"
                 onClick={handleResetSearch}
-                className="p-1.5 text-slate-400 hover:text-slate-600 rounded-lg"
+                className="p-1.5 text-slate-400 hover:text-slate-600 rounded-lg transition-colors"
                 title="Clear input"
               >
                 <X className="w-3.5 h-3.5" />
               </button>
             )}
             <button
-              type="button"
-              onClick={() => handleExecuteSearXNGSearch()}
-              disabled={!inputVal.trim() || isSearchingSearX}
-              className="px-2 py-1 rounded-lg bg-emerald-600 hover:bg-emerald-700 disabled:opacity-40 text-white text-[11px] font-medium transition-colors flex items-center gap-1 shadow-2xs"
-              title="Crawl live web with SearXNG"
-            >
-              {isSearchingSearX ? (
-                <Loader2 className="w-3.5 h-3.5 animate-spin" />
-              ) : (
-                <Globe className="w-3.5 h-3.5" />
-              )}
-              <span className="hidden sm:inline">SearXNG</span>
-            </button>
-            <button
               type="submit"
               disabled={!inputVal.trim() || isSearchingSearX}
-              className="p-1.5 rounded-lg bg-indigo-600 hover:bg-indigo-700 disabled:opacity-40 text-white transition-colors"
-              title="Filter Active Deck"
+              className="px-3 py-1.5 rounded-lg bg-slate-900 hover:bg-slate-800 disabled:opacity-40 text-white text-xs font-medium transition-colors flex items-center gap-1.5 shadow-xs"
+              title="Search papers and articles"
             >
-              <Send className="w-3.5 h-3.5" />
+              {isSearchingSearX ? (
+                <>
+                  <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                  <span className="hidden sm:inline">Searching</span>
+                </>
+              ) : (
+                <>
+                  <Search className="w-3.5 h-3.5" />
+                  <span>Search</span>
+                </>
+              )}
             </button>
           </div>
         </form>
         <div className="mt-2 flex items-center justify-between text-[11px] text-slate-400 px-1">
-          <span>Active mode: <strong>{currentMode === 'vertical-cascade' ? '3D Vertical' : currentMode === 'horizontal-ribbon' ? 'Ribbon' : '3D Cover Flow'}</strong></span>
+          <span>Active mode: <strong className="text-slate-700">{currentMode === 'vertical-cascade' ? '3D Vertical' : currentMode === 'horizontal-ribbon' ? 'Ribbon' : '3D Cover Flow'}</strong></span>
           <button 
             onClick={() => setShowSettingsModal(true)}
-            className="hover:text-indigo-600 underline font-medium"
+            className="hover:text-indigo-600 underline font-medium text-slate-500"
           >
-            Settings & SearXNG
+            Search & Deck Settings
           </button>
         </div>
       </div>
@@ -615,7 +625,7 @@ export function LeftSidebar({
                   type="button"
                   onClick={() => {
                     setShowSettingsModal(false);
-                    handleExecuteSearXNGSearch('autonomous generative AI robotics');
+                    handleExecuteSearch('autonomous generative AI robotics');
                   }}
                   className="px-2.5 py-1 bg-white hover:bg-slate-100 text-indigo-600 border border-slate-200 rounded-lg text-[11px] font-medium transition-colors"
                 >
