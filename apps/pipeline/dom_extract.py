@@ -762,6 +762,17 @@ def record_doc_stage(conn, run_id: str, doc_id: str, stage: str,
           json.dumps(counts or {}), error))
 
 
+def _record_url_reject(url: str, reason: str, status=None, detail=None) -> None:
+    """Persist a rejected URL in its own short transaction."""
+    conn = connect()
+    try:
+        url_id = ensure_url(conn, url)
+        record_reject(conn, url_id, url, reason, status, detail)
+        conn.commit()
+    finally:
+        conn.close()
+
+
 # =====================================================================
 # Per-doc processing
 # =====================================================================
@@ -770,12 +781,11 @@ async def process_one(
     url: str,
     run_id: str,
     out_dir: Path,
-    conn,
     page,
     timeout_ms: int,
     max_retries: int,
 ) -> dict:
-    url_id = ensure_url(conn, url)
+    """Fetch/extract one URL, then persist its results in an isolated transaction."""
     slug = slugify(url)
     raw_path = out_dir / f"{slug}.raw.html"
     md_path = out_dir / f"{slug}.md"
@@ -787,6 +797,7 @@ async def process_one(
     final_url = url
     headers: dict = {}
 
+    # Do not open a database transaction while waiting for the network.
     for attempt in range(max_retries + 1):
         if page is not None and HAS_PLAYWRIGHT:
             html, status, final_url, headers, error = await fetch_with_playwright(page, url, timeout_ms)
@@ -799,60 +810,66 @@ async def process_one(
         if attempt < max_retries:
             await asyncio.sleep(1.5 ** attempt)
         else:
-            record_reject(conn, url_id, url, reason or 'unknown', status, error)
-            conn.commit()
+            _record_url_reject(url, reason or 'unknown', status, error)
             return {'url': url, 'status': 'rejected', 'reason': reason}
 
     raw_path.write_text(html, encoding='utf-8')
-    record_fetch(conn, url_id, url, status, html, str(raw_path), final_url, headers)
-
     soup = BeautifulSoup(html, 'lxml')
     meta = extract_metadata(soup, url)
     region = find_content_region(soup)
     blocks = extract_blocks(region, url)
     markdown = blocks_to_markdown(blocks)
 
-    if not markdown.strip():
-        record_reject(conn, url_id, url, 'no_content_extracted', status, None)
+    if markdown.strip():
+        fm_lines = [f"source_url: {url}"]
+        if meta.get('title'):
+            fm_lines.append(f"title: {json.dumps(meta['title'])}")
+        if meta.get('author'):
+            fm_lines.append(f"author: {json.dumps(meta['author'])}")
+        if meta.get('published_at'):
+            fm_lines.append(f"published_at: {json.dumps(meta['published_at'])}")
+        if meta.get('language'):
+            fm_lines.append(f"language: {meta['language']}")
+        if meta.get('description'):
+            fm_lines.append(f"description: {json.dumps(meta['description'])}")
+        if meta.get('updated_at'):
+            fm_lines.append(f"updated_at: {json.dumps(meta['updated_at'])}")
+        if meta.get('source_type') and meta['source_type'] != 'unknown':
+            fm_lines.append(f"source_type: {meta['source_type']}")
+
+        frontmatter = "---\n" + "\n".join(fm_lines) + "\n---\n\n"
+        md_path.write_text(
+            f"{frontmatter}# Source\n\n{url}\n\n---\n\n{markdown}",
+            encoding='utf-8',
+        )
+        json_path.write_text(json.dumps({
+            'source': url,
+            'metadata': meta,
+            'blocks': blocks,
+        }, indent=2, ensure_ascii=False), encoding='utf-8')
+
+    # This connection belongs only to this URL; other crawl tasks never commit
+    # or roll back its transaction. Database activity starts after fetching.
+    conn = connect()
+    try:
+        url_id = ensure_url(conn, url)
+        record_fetch(conn, url_id, url, status, html, str(raw_path), final_url, headers)
+
+        if not markdown.strip():
+            record_reject(conn, url_id, url, 'no_content_extracted', status, None)
+            conn.commit()
+            return {'url': url, 'status': 'rejected', 'reason': 'no_content_extracted'}
+
+        conn.execute("""
+          UPDATE url_queue SET status='fetched', updated_at=%s WHERE url_id=%s
+        """, (utcnow(), url_id))
+        record_doc_stage(conn, run_id, slug, 'fetch', 'ok',
+                         counts={'bytes': len(html), 'status': status})
+        record_doc_stage(conn, run_id, slug, 'extract', 'ok',
+                         counts={'blocks': len(blocks), 'chars': len(markdown)})
         conn.commit()
-        return {'url': url, 'status': 'rejected', 'reason': 'no_content_extracted'}
-
-    fm_lines = [f"source_url: {url}"]
-    if meta.get('title'):
-        fm_lines.append(f"title: {json.dumps(meta['title'])}")
-    if meta.get('author'):
-        fm_lines.append(f"author: {json.dumps(meta['author'])}")
-    if meta.get('published_at'):
-        fm_lines.append(f"published_at: {json.dumps(meta['published_at'])}")
-    if meta.get('language'):
-        fm_lines.append(f"language: {meta['language']}")
-    if meta.get('description'):
-        fm_lines.append(f"description: {json.dumps(meta['description'])}")
-    if meta.get('updated_at'):
-        fm_lines.append(f"updated_at: {json.dumps(meta['updated_at'])}")
-    if meta.get('source_type') and meta['source_type'] != 'unknown':
-        fm_lines.append(f"source_type: {meta['source_type']}")
-
-    frontmatter = "---\n" + "\n".join(fm_lines) + "\n---\n\n"
-    md_path.write_text(
-        f"{frontmatter}# Source\n\n{url}\n\n---\n\n{markdown}",
-        encoding='utf-8'
-    )
-    json_path.write_text(json.dumps({
-        'source': url,
-        'metadata': meta,
-        'blocks': blocks,
-    }, indent=2, ensure_ascii=False), encoding='utf-8')
-
-    conn.execute("""
-      UPDATE url_queue SET status='fetched', updated_at=%s WHERE url_id=%s
-    """, (utcnow(), url_id))
-
-    record_doc_stage(conn, run_id, slug, 'fetch', 'ok',
-                     counts={'bytes': len(html), 'status': status})
-    record_doc_stage(conn, run_id, slug, 'extract', 'ok',
-                     counts={'blocks': len(blocks), 'chars': len(markdown)})
-    conn.commit()
+    finally:
+        conn.close()
 
     return {
         'url': url,
@@ -876,12 +893,7 @@ async def run(urls: str | Path | list[str],
               concurrency: int = 4,
               no_js: bool = False,
               verbose: bool = True) -> dict:
-    """
-    Crawl a list of URLs and write extracted content + DB records.
-    urls may be a path to a .txt file or an explicit list.
-    Returns {'ok': N, 'rejected': N, 'errored': N, 'total': N, 'run_id': str}.
-    """
-    # Resolve urls input
+    """Crawl URLs concurrently while persisting each URL in its own transaction."""
     if isinstance(urls, (str, Path)):
         urls_path = Path(urls)
         if not urls_path.exists():
@@ -898,13 +910,16 @@ async def run(urls: str | Path | list[str],
 
     out_path = Path(out_dir)
     out_path.mkdir(parents=True, exist_ok=True)
-
-    conn = connect()
     if run_id is None:
         run_id = sha16(f"crawl-{utcnow()}-{len(url_list)}")
 
-    ensure_run(conn, run_id, None, len(url_list))
-    conn.commit()
+    # Use a short, dedicated connection for run metadata, never the per-URL tasks.
+    conn = connect()
+    try:
+        ensure_run(conn, run_id, None, len(url_list))
+        conn.commit()
+    finally:
+        conn.close()
 
     last_hit: dict[str, float] = defaultdict(float)
     domain_locks: dict[str, asyncio.Lock] = {}
@@ -918,21 +933,18 @@ async def run(urls: str | Path | list[str],
     async def gate(url: str):
         p = urlparse(url)
         domain = domain_of(url)
-
         parser = await get_robots(p.scheme or 'https', domain, timeout)
         if not robots_can_fetch(parser, url, USER_AGENT):
             return False, 'robots_disallow'
 
         site_delay = robots_crawl_delay(parser, USER_AGENT)
         effective_delay = max(rate_limit, site_delay or 0.0)
-
         async with _domain_lock(domain):
             now = time.monotonic()
             wait = effective_delay - (now - last_hit[domain])
             if wait > 0:
                 await asyncio.sleep(wait)
             last_hit[domain] = time.monotonic()
-
         return True, None
 
     results = []
@@ -946,71 +958,68 @@ async def run(urls: str | Path | list[str],
                 async with sem:
                     allowed, reason = await gate(url)
                     if not allowed:
-                        url_id = ensure_url(conn, url)
-                        record_reject(conn, url_id, url, reason, None, None)
-                        conn.commit()
+                        _record_url_reject(url, reason or 'robots_disallow', None, None)
                         return url, {'url': url, 'status': 'rejected', 'reason': reason}
-                    r = await process_one(
-                        url, run_id, out_path, conn, None,
-                        timeout, max_retries,
+                    result = await process_one(
+                        url, run_id, out_path, None, timeout, max_retries,
                     )
-                    return url, r
+                    return url, result
             except Exception as e:
                 return url, {'url': url, 'status': 'error', 'reason': str(e)}
 
         tasks = [asyncio.create_task(fetch_task(u)) for u in url_list]
         for coro in asyncio.as_completed(tasks):
-            url, r = await coro
-            results.append(r)
+            url, result = await coro
+            results.append(result)
             if verbose:
-                print(f"  {r['status']:9s}  {url[:80]}")
+                print(f"  {result['status']:9s}  {url[:80]}")
     else:
         async with async_playwright() as p:
             browser = await p.chromium.launch(headless=True)
             context = await browser.new_context(user_agent=USER_AGENT)
+            try:
+                async def fetch_task(url: str):
+                    try:
+                        async with sem:
+                            allowed, reason = await gate(url)
+                            if not allowed:
+                                _record_url_reject(url, reason or 'robots_disallow', None, None)
+                                return url, {'url': url, 'status': 'rejected', 'reason': reason}
+                            page = await context.new_page()
+                            try:
+                                result = await process_one(
+                                    url, run_id, out_path, page, timeout, max_retries,
+                                )
+                                return url, result
+                            finally:
+                                await page.close()
+                    except Exception as e:
+                        return url, {'url': url, 'status': 'error', 'reason': str(e)}
 
-            async def fetch_task(url: str):
-                try:
-                    async with sem:
-                        allowed, reason = await gate(url)
-                        if not allowed:
-                            url_id = ensure_url(conn, url)
-                            record_reject(conn, url_id, url, reason, None, None)
-                            conn.commit()
-                            return url, {'url': url, 'status': 'rejected', 'reason': reason}
-                        page = await context.new_page()
-                        try:
-                            r = await process_one(
-                                url, run_id, out_path, conn, page,
-                                timeout, max_retries,
-                            )
-                            return url, r
-                        finally:
-                            await page.close()
-                except Exception as e:
-                    return url, {'url': url, 'status': 'error', 'reason': str(e)}
+                tasks = [asyncio.create_task(fetch_task(u)) for u in url_list]
+                for coro in asyncio.as_completed(tasks):
+                    url, result = await coro
+                    results.append(result)
+                    if verbose:
+                        print(f"  {result['status']:9s}  {url[:80]}")
+            finally:
+                await browser.close()
 
-            tasks = [asyncio.create_task(fetch_task(u)) for u in url_list]
-            for coro in asyncio.as_completed(tasks):
-                url, r = await coro
-                results.append(r)
-                if verbose:
-                    print(f"  {r['status']:9s}  {url[:80]}")
-
-            await browser.close()
-
-    ok = sum(1 for r in results if r['status'] == 'ok')
-    rejected = sum(1 for r in results if r['status'] == 'rejected')
-    errored = sum(1 for r in results if r['status'] == 'error')
-
+    ok = sum(1 for result in results if result['status'] == 'ok')
+    rejected = sum(1 for result in results if result['status'] == 'rejected')
+    errored = sum(1 for result in results if result['status'] == 'error')
     if verbose:
         print(f"\ndone: {ok} ok, {rejected} rejected, {errored} errored, {len(results)} total")
 
-    conn.execute("""
-      UPDATE pipeline_runs SET status='completed', finished_at=%s WHERE run_id=%s
-    """, (utcnow(), run_id))
-    conn.commit()
-    conn.close()
+    conn = connect()
+    try:
+        conn.execute(
+            "UPDATE pipeline_runs SET status='completed', finished_at=%s WHERE run_id=%s",
+            (utcnow(), run_id),
+        )
+        conn.commit()
+    finally:
+        conn.close()
 
     return {
         'ok': ok,

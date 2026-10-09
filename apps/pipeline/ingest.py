@@ -212,6 +212,28 @@ def _extract_source_url(blocks: list[dict], frontmatter: dict | None = None) -> 
     return None
 
 
+
+# Psycopg 3's executemany pipelines parameterized statements. Bounded batches
+# avoid one network round-trip per row while keeping Python memory use modest.
+DB_WRITE_BATCH_SIZE = 500
+
+def _executemany_batched(conn, sql: str, rows, batch_size: int = DB_WRITE_BATCH_SIZE) -> int:
+    """Execute parameter rows in bounded batches; return the number of rows."""
+    total = 0
+    batch = []
+    with conn.cursor() as cur:
+        for row in rows:
+            batch.append(row)
+            if len(batch) >= batch_size:
+                cur.executemany(sql, batch)
+                total += len(batch)
+                batch.clear()
+        if batch:
+            cur.executemany(sql, batch)
+            total += len(batch)
+    return total
+
+
 def load_doc(conn, ast: dict, run_id: str | None = None) -> dict:
     doc_id = ast['doc_id']
     blocks = ast['blocks']
@@ -290,122 +312,119 @@ def load_doc(conn, ast: dict, run_id: str | None = None) -> dict:
 
     # -- sections --
     sections = derive_sections(blocks, doc_id)
-    for s in sections:
-        conn.execute("""
-          INSERT INTO sections
-            (section_id, doc_id, parent_section_id, heading, heading_level,
-             heading_path, first_block_id, last_block_id, token_count,
-             char_start, char_end, is_boilerplate)
-          VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
-        """, (
-            s['section_id'], s['doc_id'], s['parent_section_id'],
-            s['heading'], s['heading_level'], s['heading_path'],
-            s['first_block_id'], s['last_block_id'], s['token_count'],
-            s['char_start'], s['char_end'], s['is_boilerplate'],
-        ))
+    _executemany_batched(conn, """
+      INSERT INTO sections
+        (section_id, doc_id, parent_section_id, heading, heading_level,
+         heading_path, first_block_id, last_block_id, token_count,
+         char_start, char_end, is_boilerplate)
+      VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+    """, (
+        (s['section_id'], s['doc_id'], s['parent_section_id'],
+         s['heading'], s['heading_level'], s['heading_path'],
+         s['first_block_id'], s['last_block_id'], s['token_count'],
+         s['char_start'], s['char_end'], s['is_boilerplate'])
+        for s in sections
+    ))
 
     # -- blocks --
-    for b in blocks:
-        conn.execute("""
-          INSERT INTO blocks
-            (block_id, doc_id, section_id, parent_block_id, prev_block_id, next_block_id,
-             list_id, block_type, heading_path, order_index, char_start, char_end,
-             char_count, token_count, text, raw_text, content_hash,
-             is_orphan, is_boilerplate, is_math, is_footnote, language, extra_json)
-          VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
-        """, (
-            b['block_id'], doc_id, b.get('section_id'),
-            b.get('parent_block_id'), b.get('prev_block_id'), b.get('next_block_id'),
-            b.get('list_id'), b['block_type'],
-            json.dumps(b.get('heading_path', [])),
-            b['position_index'], b['char_start'], b['char_end'],
-            b.get('char_count'), b.get('token_count'),
-            b.get('text', ''), b.get('content', ''),
-            b.get('content_hash'),
-            int(bool(b.get('is_orphan'))),
-            int(bool(b.get('is_boilerplate'))),
-            int(bool(b.get('is_math'))),
-            int(bool(b.get('is_footnote'))),
-            b.get('language'),
-            json.dumps({'language': b.get('language')}) if b.get('language') else None,
-        ))
+    _executemany_batched(conn, """
+      INSERT INTO blocks
+        (block_id, doc_id, section_id, parent_block_id, prev_block_id, next_block_id,
+         list_id, block_type, heading_path, order_index, char_start, char_end,
+         char_count, token_count, text, raw_text, content_hash,
+         is_orphan, is_boilerplate, is_math, is_footnote, language, extra_json)
+      VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+    """, (
+        (b['block_id'], doc_id, b.get('section_id'),
+         b.get('parent_block_id'), b.get('prev_block_id'), b.get('next_block_id'),
+         b.get('list_id'), b['block_type'], json.dumps(b.get('heading_path', [])),
+         b['position_index'], b['char_start'], b['char_end'],
+         b.get('char_count'), b.get('token_count'), b.get('text', ''),
+         b.get('content', ''), b.get('content_hash'),
+         int(bool(b.get('is_orphan'))), int(bool(b.get('is_boilerplate'))),
+         int(bool(b.get('is_math'))), int(bool(b.get('is_footnote'))),
+         b.get('language'), json.dumps({'language': b.get('language')}) if b.get('language') else None)
+        for b in blocks
+    ))
 
     # -- atoms --
-    atom_count = 0
-    for b in blocks:
-        if b.get('is_boilerplate'):
-            continue
-        atom_list = atomize_block(b)
-        for i, (atype, text) in enumerate(atom_list):
-            if not text:
+    def atom_rows():
+        for b in blocks:
+            if b.get('is_boilerplate'):
                 continue
-            atom_id = sha16(f"{b['block_id']}|{i}|{text}")
-            conn.execute("""
-              INSERT INTO atoms
-                (atom_id, block_id, doc_id, section_id, atom_type,
-                 order_index, char_start, char_end, token_count, text, content_hash)
-              VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
-              ON CONFLICT (atom_id) DO UPDATE SET
-                block_id     = EXCLUDED.block_id,
-                doc_id       = EXCLUDED.doc_id,
-                section_id   = EXCLUDED.section_id,
-                atom_type    = EXCLUDED.atom_type,
-                order_index  = EXCLUDED.order_index,
-                char_start   = EXCLUDED.char_start,
-                char_end     = EXCLUDED.char_end,
-                token_count  = EXCLUDED.token_count,
-                text         = EXCLUDED.text,
-                content_hash = EXCLUDED.content_hash
-            """, (
-                atom_id, b['block_id'], doc_id, b.get('section_id'),
-                atype, i,
-                b['char_start'], b['char_end'],
-                count_tokens(text), text, sha16(text),
-            ))
-            atom_count += 1
+            for i, (atype, atom_text) in enumerate(atomize_block(b)):
+                if not atom_text:
+                    continue
+                atom_id = sha16(f"{b['block_id']}|{i}|{atom_text}")
+                yield (
+                    atom_id, b['block_id'], doc_id, b.get('section_id'),
+                    atype, i, b['char_start'], b['char_end'],
+                    count_tokens(atom_text), atom_text, sha16(atom_text),
+                )
+
+    atom_count = _executemany_batched(conn, """
+      INSERT INTO atoms
+        (atom_id, block_id, doc_id, section_id, atom_type,
+         order_index, char_start, char_end, token_count, text, content_hash)
+      VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+      ON CONFLICT (atom_id) DO UPDATE SET
+        block_id     = EXCLUDED.block_id,
+        doc_id       = EXCLUDED.doc_id,
+        section_id   = EXCLUDED.section_id,
+        atom_type    = EXCLUDED.atom_type,
+        order_index  = EXCLUDED.order_index,
+        char_start   = EXCLUDED.char_start,
+        char_end     = EXCLUDED.char_end,
+        token_count  = EXCLUDED.token_count,
+        text         = EXCLUDED.text,
+        content_hash = EXCLUDED.content_hash
+    """, atom_rows())
 
     # -- images --
-    for b in blocks:
-        for img in b.get('image_refs') or []:
-            url = img.get('url')
-            if not url:
-                continue
-            image_id = sha16(url)
-            conn.execute("""
-              INSERT INTO images
-                (image_id, block_id, doc_id, section_id, url, alt, created_at)
-              VALUES (%s, %s, %s, %s, %s, %s, %s)
-              ON CONFLICT (image_id) DO NOTHING
-            """, (
-                image_id, b['block_id'], doc_id, b.get('section_id'),
-                url, img.get('alt', ''), now,
-            ))
+    def image_rows():
+        for b in blocks:
+            for img in b.get('image_refs') or []:
+                url = img.get('url')
+                if not url:
+                    continue
+                yield (
+                    sha16(url), b['block_id'], doc_id, b.get('section_id'),
+                    url, img.get('alt', ''), now,
+                )
+
+    _executemany_batched(conn, """
+      INSERT INTO images
+        (image_id, block_id, doc_id, section_id, url, alt, created_at)
+      VALUES (%s, %s, %s, %s, %s, %s, %s)
+      ON CONFLICT (image_id) DO NOTHING
+    """, image_rows())
 
     # -- links --
-    for b in blocks:
-        for i, lnk in enumerate(b.get('links') or []):
-            url = lnk.get('url')
-            if not url:
-                continue
-            link_id = sha16(f"{b['block_id']}|{i}|{url}")
-            conn.execute("""
-              INSERT INTO links
-                (link_id, block_id, doc_id, url, text, is_internal, is_citation, order_index)
-              VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
-              ON CONFLICT (link_id) DO UPDATE SET
-                block_id    = EXCLUDED.block_id,
-                doc_id      = EXCLUDED.doc_id,
-                url         = EXCLUDED.url,
-                text        = EXCLUDED.text,
-                is_internal = EXCLUDED.is_internal,
-                is_citation = EXCLUDED.is_citation,
-                order_index = EXCLUDED.order_index
-            """, (
-                link_id, b['block_id'], doc_id, url,
-                lnk.get('text', ''),
-                int(url.startswith('/') or source_url in url),
-                0, i,
-            ))
+    def link_rows():
+        for b in blocks:
+            for i, lnk in enumerate(b.get('links') or []):
+                url = lnk.get('url')
+                if not url:
+                    continue
+                yield (
+                    sha16(f"{b['block_id']}|{i}|{url}"), b['block_id'], doc_id,
+                    url, lnk.get('text', ''), int(url.startswith('/') or source_url in url),
+                    0, i,
+                )
+
+    _executemany_batched(conn, """
+      INSERT INTO links
+        (link_id, block_id, doc_id, url, text, is_internal, is_citation, order_index)
+      VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+      ON CONFLICT (link_id) DO UPDATE SET
+        block_id    = EXCLUDED.block_id,
+        doc_id      = EXCLUDED.doc_id,
+        url         = EXCLUDED.url,
+        text        = EXCLUDED.text,
+        is_internal = EXCLUDED.is_internal,
+        is_citation = EXCLUDED.is_citation,
+        order_index = EXCLUDED.order_index
+    """, link_rows())
 
     # -- doc_stages --
     if run_id:
@@ -439,8 +458,9 @@ def load_doc(conn, ast: dict, run_id: str | None = None) -> dict:
 def run(blocks_dir: Path | None = None,
         run_id: str | None = None) -> dict:
     """
-    Load every block JSON in blocks_dir into the DB.
-    Returns {'docs': N, 'blocks': M, 'atoms': K, 'sections': S, 'run_id': str}.
+    Load block JSONs into Neon using batched row writes. Each document is its
+    own transaction so a failed document rolls back cleanly without holding a
+    transaction open for the entire run.
     """
     src = Path(blocks_dir) if blocks_dir else BLOCKS_DIR
     json_files = sorted(src.glob('*.json'))
@@ -449,46 +469,63 @@ def run(blocks_dir: Path | None = None,
         print(f"no JSON files in {src}")
         return {'docs': 0, 'blocks': 0, 'atoms': 0, 'sections': 0, 'run_id': None}
 
-    conn = connect()
     if run_id is None:
         run_id = sha16(f"ingest-{utcnow()}")
 
-    conn.execute("""
-      INSERT INTO pipeline_runs (run_id, started_at, status, stages_json)
-      VALUES (%s, %s, 'running', %s)
-      ON CONFLICT (run_id) DO NOTHING
-    """, (run_id, utcnow(), json.dumps(['load'])))
-
+    conn = connect()
     total = {'docs': 0, 'blocks': 0, 'atoms': 0, 'sections': 0}
+    try:
+        conn.execute("""
+          INSERT INTO pipeline_runs (run_id, started_at, status, stages_json)
+          VALUES (%s, %s, 'running', %s)
+          ON CONFLICT (run_id) DO NOTHING
+        """, (run_id, utcnow(), json.dumps(['load'])))
+        conn.commit()
 
-    for jf in json_files:
-        try:
-            ast = json.loads(jf.read_text(encoding='utf-8'))
-        except Exception as e:
-            print(f"skip {jf.name}: {e}")
-            continue
-        r = load_doc(conn, ast, run_id)
-        total['docs'] += 1
-        total['blocks'] += r['blocks']
-        total['atoms'] += r['atoms']
-        total['sections'] += r['sections']
-        print(f"{r['doc_id'][:55]:55s}  "
-              f"{r['blocks']:4d} blocks  "
-              f"{r['atoms']:4d} atoms  "
-              f"{r['sections']:3d} sections")
+        for jf in json_files:
+            try:
+                ast = json.loads(jf.read_text(encoding='utf-8'))
+            except Exception as e:
+                print(f"skip {jf.name}: {e}")
+                continue
 
-    conn.execute("""
-      UPDATE pipeline_runs SET status='completed', finished_at=%s WHERE run_id=%s
-    """, (utcnow(), run_id))
-    conn.commit()
-    conn.close()
+            try:
+                result = load_doc(conn, ast, run_id)
+                conn.commit()
+            except Exception:
+                conn.rollback()
+                try:
+                    conn.execute(
+                        "UPDATE pipeline_runs SET status='failed', finished_at=%s WHERE run_id=%s",
+                        (utcnow(), run_id),
+                    )
+                    conn.commit()
+                except Exception:
+                    conn.rollback()
+                raise
+
+            total['docs'] += 1
+            total['blocks'] += result['blocks']
+            total['atoms'] += result['atoms']
+            total['sections'] += result['sections']
+            print(f"{result['doc_id'][:55]:55s}  "
+                  f"{result['blocks']:4d} blocks  "
+                  f"{result['atoms']:4d} atoms  "
+                  f"{result['sections']:3d} sections")
+
+        conn.execute(
+            "UPDATE pipeline_runs SET status='completed', finished_at=%s WHERE run_id=%s",
+            (utcnow(), run_id),
+        )
+        conn.commit()
+    finally:
+        conn.close()
 
     print()
     print(f"loaded: {total['docs']} docs, "
           f"{total['blocks']} blocks, "
           f"{total['atoms']} atoms, "
           f"{total['sections']} sections")
-
     total['run_id'] = run_id
     return total
 

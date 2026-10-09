@@ -35,6 +35,10 @@ npm run dev
 
 Open http://localhost:3000.
 
+Synthesis requires the Python API and worker to be running. If the API is
+unavailable, the UI reports the connection error; it does not generate a
+simulated article.
+
 ## Prerequisites
 
 - Python 3.11+
