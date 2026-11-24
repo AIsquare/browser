@@ -213,7 +213,7 @@ def call_llm(system: str, user: str) -> str:
             {'role': 'user',   'content': user},
         ],
         temperature=TEMPERATURE,
-        reasoning_effort='low',
+        reasoning_effort='high',
         max_tokens=MAX_TOKENS,
     )
     choice = response.choices[0] if response.choices else None

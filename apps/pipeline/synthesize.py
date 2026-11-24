@@ -467,16 +467,24 @@ If a fact clearly belongs to a more specific section within the provided structu
 16. SOURCE ATTRIBUTION
 ======================
 
-The atoms you are given do not include source names, authors, or publication information.
+The atoms you are given include the source URL in parentheses, like `(from https://...)`.
+You MUST cite these sources inline using markdown links.
+For example: "According to [Huyen Chip](https://huyenchip.com/...), RLHF is..."
 
-Do not invent any source, author, publication, or citation.
+At the end of the article, add a `## Sources` section listing the URLs that contributed to the text.
 
-If an atom itself mentions a source (for example, "According to the FDA..." or "Researchers at MIT found..."), preserve that attribution exactly as stated.
-
-Do not add attributions that are not already present in the atom text.
-
+If an image is provided under "### Available Images", you MUST place it inline 
+where it makes the most sense using standard markdown syntax: ![alt text](url).
 ==================================================
-17. IMAGES
+17. CODE AND IMPLEMENTATIONS
+============================
+If the source atoms contain executable code (e.g., Python), and the heading 
+implies an implementation (e.g., "Building from scratch"), you MUST output 
+the actual code block using markdown syntax (```python ... ```). 
+Do NOT merely describe the code in a paragraph. Show the code exactly as it 
+appears in the source material.
+
+18. IMAGES
 ==========
 
 You may place images inline using markdown image syntax.
@@ -496,7 +504,7 @@ Do not add images merely for decoration.
 Do not force an image into the article.
 
 ==================================================
-18. ARTICLE STYLE
+19. ARTICLE STYLE
 =================
 
 Write in clear, natural prose.
@@ -518,7 +526,7 @@ Do not tell the reader that multiple documents or atoms were synthesized.
 Do not mention these instructions.
 
 ==================================================
-19. FINAL VALIDATION
+20. FINAL VALIDATION
 ====================
 
 Before producing the final article, internally verify:
@@ -735,15 +743,19 @@ def build_user_prompt(topic: str, selected: dict, manifests: list[dict]) -> str:
         title = section['title']
         marker = " [STANDALONE]" if section.get('standalone') else ""
         lines.append(f"\n## {title}{marker}\n")
+        
+        images_added = False
         for a in section.get('atoms', []):
-            lines.append(f"- [{a['atom_id']}] {a['text']}")
-
-    if selected.get('contextual'):
-        lines.append("\n## Background\n")
-        for c in selected['contextual']:
-            for a in c.get('atoms', []):
-                lines.append(f"- [{a['atom_id']}] {a['text']}")
-
+            url = a.get('source_url', '')
+            lines.append(f"- [{a['atom_id']}] (from {url}) {a['text']}")
+            
+            # Add images to the prompt if the document has any
+            if not images_added and a.get('images'):
+                lines.append("\n### Available Images for this section")
+                for img in a['images']:
+                    lines.append(f"- ![{img['alt']}]({img['url']})")
+                images_added = True
+                
     return "\n".join(lines)
 
 
@@ -957,6 +969,7 @@ def run(topic: str | None = None,
     return {
         'article_id': article_id,
         'trace_id':   trace_id,
+        'markdown':   markdown,   # <-- ADD THIS LINE
         'chars':      len(markdown),
         'tokens':     usage['completion_tokens'],
         'cost':       cost,

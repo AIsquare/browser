@@ -29,13 +29,14 @@ class WindowsWorker(SimpleWorker):
 
 
 def main():
-    redis_url = os.environ.get('REDIS_URL', 'redis://localhost:6379')
-
+    redis_url = os.environ.get('REDIS_URL', 'redis://localhost:6379/0')
+    
+    # Local Redis doesn't need SSL, just protocol 2
+    conn = redis.from_url(redis_url, protocol=2)
     if redis_url.startswith('rediss://'):
-        conn = redis.from_url(redis_url, ssl_cert_reqs=None)
+        conn = redis.from_url(redis_url, ssl_cert_reqs=None, protocol=2)
     else:
-        conn = redis.from_url(redis_url)
-
+        conn = redis.from_url(redis_url, protocol=2)
     queues = [Queue('default', connection=conn)]
 
     print(f"worker starting — redis={redis_url.split('@')[-1]} queues=['default']")

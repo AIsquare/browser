@@ -36,12 +36,12 @@ def utcnow() -> str:
 
 app = FastAPI(title="Pipeline API")
 
-redis_url = os.environ.get('REDIS_URL', 'redis://localhost:6379')
+redis_url = os.environ.get('REDIS_URL', 'redis://localhost:6379/0')
 redis_conn = redis.from_url(
     redis_url,
     socket_timeout=30,
     socket_connect_timeout=30,
-    ssl_cert_reqs=None if redis_url.startswith('rediss://') else 'required',
+    protocol=2  # Required for the local Windows Redis zip
 )
 job_queue = Queue('default', connection=redis_conn)
 

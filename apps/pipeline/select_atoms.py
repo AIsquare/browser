@@ -67,10 +67,18 @@ def load_doc_id_map(conn) -> dict[str, str]:
 
 def load_atoms_for_doc(conn, doc_id: str) -> list[dict]:
     rows = conn.execute("""
-        SELECT atom_id, text, char_start, char_end, atom_type
-        FROM atoms
-        WHERE doc_id = %s
-        ORDER BY order_index
+        SELECT a.atom_id, a.text, a.char_start, a.char_end, a.atom_type,
+               d.source_url
+        FROM atoms a
+        JOIN documents d ON d.doc_id = a.doc_id
+        WHERE a.doc_id = %s
+        ORDER BY a.order_index
+    """, (doc_id,)).fetchall()
+    return [dict(r) for r in rows]
+
+def load_images_for_doc(conn, doc_id: str) -> list[dict]:
+    rows = conn.execute("""
+        SELECT url, alt FROM images WHERE doc_id = %s LIMIT 3
     """, (doc_id,)).fetchall()
     return [dict(r) for r in rows]
 
@@ -135,9 +143,11 @@ def select_for_section(section: dict,
         doc_id = doc_id_map.get(url)
         if doc_id:
             atoms = rank_atoms(load_atoms_for_doc(conn, doc_id))
+            imgs = load_images_for_doc(conn, doc_id)
             chosen = atoms[:STANDALONE_BUDGET]
             for a in chosen:
                 a['_role'] = 'standalone'
+                a['images'] = imgs
             selected.extend(chosen)
         return {'title': title, 'standalone': True, 'atoms': selected}
 
